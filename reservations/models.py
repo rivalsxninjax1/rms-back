@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.contrib.auth import get_user_model
-
+from django.apps import apps as _apps
 User = get_user_model()
 
 class Table(models.Model):
@@ -43,3 +43,20 @@ class Reservation(models.Model):
 
     def __str__(self):
         return f"{self.customer_name} - {self.reservation_date} {self.reservation_time}"
+    def __getattr__(name):  # PEP 562 — module-level __getattr__
+     if name == "ReservationHold":
+        try:
+            return _apps.get_model("engagement", "ReservationHold")
+        except Exception as e:
+            # Raising AttributeError here keeps Python import semantics correct
+            raise AttributeError(f"ReservationHold not available yet: {e}")
+     raise AttributeError(name)
+# --- Compatibility re-export so legacy imports keep working ---
+    try:
+    # Make "from reservations.models import ReservationHold" succeed
+     from engagement.models import ReservationHold as ReservationHold  # noqa: F401
+    except Exception:
+    # If engagement app isn't ready during certain import paths, just skip.
+    # (Admin/urls import order can cause this during checks; model will still be available at runtime.)
+     pass
+   

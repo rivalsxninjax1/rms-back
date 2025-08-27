@@ -1,4 +1,3 @@
-# FILE: orders/views.py
 from __future__ import annotations
 
 from decimal import Decimal
@@ -34,6 +33,9 @@ except Exception:  # pragma: no cover
     def compute_discount_for_order(order: Order, coupon, user):
         return False, Decimal("0.00"), "coupon service missing"
 
+# NOTE:
+# Keep the original import path ("loyalty.services") which is proxied to the new tip-based
+# logic implemented in the `loyality` app. If the proxy isn’t present, the safe stubs apply.
 try:
     from loyalty.services import get_available_reward_for_user, reserve_reward_for_order  # type: ignore
 except Exception:  # pragma: no cover
@@ -508,25 +510,33 @@ class OrderViewSet(viewsets.ModelViewSet):
                     tip_dec = Decimal("0.00")
             order.tip_amount = tip_dec
 
-            # Coupon
-            order.discount_amount = Decimal("0.00")
-            order.discount_code = ""
+            # Coupon (compute but do not yet apply; we will pick best-of)
+            coupon_discount = Decimal("0.00")
+            coupon_code_used = ""
             if coupon_code:
                 c = find_active_coupon(coupon_code)
                 ok, disc, _reason = compute_discount_for_order(order, c, user)
                 if ok:
-                    order.discount_amount = disc
-                    order.discount_code = c.code
+                    coupon_discount = disc
+                    coupon_code_used = c.code
 
-            # Loyalty (optional)
-            if user and not getattr(order, "loyalty_reward_applied", False):
-                reward = get_available_reward_for_user(user)
+            # Loyalty (TIP-based; FIXED amount) — proxied via loyalty.services
+            reward = get_available_reward_for_user(user)
+            loyalty_discount = reward.as_discount_amount(order.subtotal) if reward else Decimal("0.00")
+
+            # BEST-OF: choose the greater absolute discount (no stacking; tips excluded from min spend upstream)
+            if loyalty_discount >= coupon_discount and loyalty_discount > 0:
+                order.discount_amount = loyalty_discount
+                order.discount_code = "LOYALTY"
+                # keep compatibility no-op
                 if reward:
                     reserve_reward_for_order(reward, order)
-                    order.discount_amount = (order.discount_amount or Decimal("0.00")) + reward.as_discount_amount(order.subtotal)
-                    order.loyalty_reward_applied = True
-                    if not order.discount_code:
-                        order.discount_code = "LOYALTY"
+            elif coupon_discount > 0:
+                order.discount_amount = coupon_discount
+                order.discount_code = coupon_code_used
+            else:
+                order.discount_amount = Decimal("0.00")
+                order.discount_code = ""
 
             order.full_clean()
             order.save()

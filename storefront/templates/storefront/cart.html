@@ -1,12 +1,21 @@
-<!-- FILE: storefront/templates/storefront/cart.html -->
 {% extends "storefront/base.html" %}
 {% block title %}Your Cart{% endblock %}
 
 {% block content %}
   <h1>Your Cart</h1>
 
-  <!-- Cart items list rendered by cart-render.js -->
+  <!-- Cart items list (rendered by JS) -->
   <div id="cart-items" class="cart-list"></div>
+
+  <!-- Coupon input -->
+  <div id="coupon-row" style="display:flex; gap:8px; align-items:center; margin: 10px 0 6px;">
+    <input id="coupon-code" placeholder="Coupon code" style="flex:1; max-width:240px;">
+    <button id="apply-coupon" class="btn btn-secondary" type="button">Apply</button>
+    <span id="coupon-msg" class="muted" style="margin-left:8px;"></span>
+  </div>
+
+  <!-- Loyalty message (fetched from /loyalty/preview/) -->
+  <div id="loyalty-msg" class="muted" style="margin: 6px 0 8px;"></div>
 
   <!-- Inline Order Method -->
   <div id="order-method-inline" style="margin:16px 0;">
@@ -20,41 +29,46 @@
     <label>
       <input type="radio" name="order_method_inline" value="DOORDASH"> DoorDash
     </label>
-
-    <!-- Dine-in table SELECT (from RMS Admin Tables) -->
-    <div id="table-select-wrap" style="margin-top:10px; display:none;">
-      <label>Table&nbsp;
-        <select id="table-select" style="min-width: 160px;">
-          <option value="">Choose your table…</option>
-          {% if tables %}
-            {% for t in tables %}
-              <option value="{{ t.id }}" data-number="{{ t.table_number }}">
-                {% if t.location %}{{ t.location.name }} — {% endif %}Table {{ t.table_number }}
-              </option>
-            {% endfor %}
-          {% endif %}
-        </select>
-      </label>
-      <small class="muted">This list is synced with RMS Admin &rarr; Tables.</small>
-    </div>
   </div>
 
-  <!-- Coupon just above Pay -->
-  <div id="coupon-row" style="display:flex; gap:8px; align-items:center; margin: 10px 0 6px;">
-    <input id="coupon-code" placeholder="Coupon code" style="flex:1; max-width:240px;">
-    <button id="apply-coupon" class="btn btn-secondary" type="button">Apply</button>
-    <span id="coupon-msg" class="muted" style="margin-left:8px;"></span>
+  <!-- Dine-in table select (hidden until DINE_IN) -->
+  <div id="table-select-wrap" style="display:none; margin:12px 0;">
+    <label style="font-weight:600;">Select a table:</label>
+    <select id="table-select" style="margin-left:8px; min-width:240px;">
+      <option value="">-- Choose a table --</option>
+      {% for t in tables %}
+        <option value="{{ t.id }}">Table {{ t.table_number }} ({{ t.location.name }}, cap {{ t.capacity }})</option>
+      {% endfor %}
+    </select>
+    <small style="margin-left:8px;">(Holds for <span id="hold-mins">{{ RESERVATION_HOLD_MINUTES|default:20 }}</span> mins during payment)</small>
   </div>
 
-  <div class="cart-actions" style="margin-top: 12px;">
+  <!-- Tip input -->
+  <div id="tip-wrap" style="margin:16px 0;">
+    <label for="tip-input" style="font-weight:600;">Wanna leave a tip?</label>
+    <input id="tip-input" type="number" min="0" step="0.01" value="0.00" style="margin-left:8px; width:120px;"/>
+    <button id="save-tip-btn" class="btn btn-sm" style="margin-left:8px;">Save Tip</button>
+    <small id="tip-msg" style="margin-left:8px; color:#666;"></small>
+  </div>
+
+  <!-- Totals -->
+  <div id="cart-totals" style="margin:12px 0; font-weight:600;">
+    Subtotal: <span id="subtotal">NPR 0.00</span><br/>
+    Tip: <span id="tip-amount">NPR 0.00</span><br/>
+    <span id="discount-row" style="display:none;">Discount: <span id="discount-amount">NPR 0.00</span><br/></span>
+    <span style="font-size:1.1em;">Total: <span id="grand-total">NPR 0.00</span></span>
+  </div>
+
+  <!-- Pay -->
+  <div class="cart-actions" style="margin-top: 16px;">
     <button id="pay-btn" class="btn btn-primary" disabled>Pay with Card</button>
   </div>
 
   <!-- Ensure CSRF cookie exists for fetch() POSTs -->
   <form style="display:none">{% csrf_token %}</form>
 
-  <!-- Toggle table select when method changes -->
   <script>
+    // Toggle table selector with Order Method
     document.addEventListener("change", (e)=>{
       if (e.target && e.target.name === "order_method_inline"){
         const v = e.target.value;
@@ -62,5 +76,24 @@
         if (wrap) wrap.style.display = (v === "DINE_IN") ? "" : "none";
       }
     });
+
+    // Preview loyalty message
+    async function previewLoyalty(){
+      try{
+        const r = await fetch("/loyalty/preview/", {credentials:"include"});
+        if(!r.ok) return;
+        const j = await r.json();
+        const el = document.getElementById("loyalty-msg");
+        if (!el) return;
+        if (j.eligible && j.message){
+          el.textContent = j.message;
+          el.classList.remove("muted");
+        } else {
+          el.textContent = "";
+          el.classList.add("muted");
+        }
+      }catch(e){}
+    }
+    document.addEventListener("DOMContentLoaded", previewLoyalty);
   </script>
 {% endblock %}

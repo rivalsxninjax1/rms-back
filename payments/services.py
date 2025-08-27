@@ -3,236 +3,267 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict, Any
+
+from io import BytesIO
 
 import stripe
 from django.conf import settings
 from django.urls import reverse
-from io import BytesIO
+from django.utils import timezone
+from django.db import transaction
 
 from payments.models import Payment
+from orders.models import Order
+from engagement.models import OrderExtras
+from engagement.services import (
+    get_pending_tip_for_user,
+    best_loyalty_discount_for_user,
+    choose_better_discount,
+    clear_pending_tips_for_user,
+)
 
 logger = logging.getLogger(__name__)
 stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", "")
 
-# Try to import Celery task; fallback to inline call
-try:
-    from payments.tasks import run_post_payment_hooks_task as _hooks_task
-except Exception:
-    _hooks_task = None
 
-def _site_url() -> str:
-    site = (getattr(settings, "SITE_URL", "") or "").strip().rstrip("/")
-    if site:
-        return site
-    dom = (getattr(settings, "DOMAIN", "") or "").strip().rstrip("/")
-    if dom:
-        return dom
-    return "http://127.0.0.1:8000"
-
+# ---------------------------
+# Money / URL helpers
+# ---------------------------
 def _currency() -> str:
-    cur = getattr(settings, "STRIPE_CURRENCY", "usd")
-    return (cur or "usd").lower()
+    # keep API compatible with your existing codebase
+    return getattr(settings, "CURRENCY", getattr(settings, "STRIPE_CURRENCY", "usd")).lower()
 
-def _as_decimal(x) -> Decimal:
-    if isinstance(x, Decimal):
-        return x
-    return Decimal(str(x))
 
 def _money_cents(amount: Decimal) -> int:
-    cents = (_as_decimal(amount).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) * 100)
-    return int(cents)
+    q = Decimal(amount or 0).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int((q * 100).to_integral_value())
 
-def compute_order_total(order) -> Decimal:
+
+def _success_url(order: Order) -> str:
+    return getattr(settings, "SITE_URL", "").rstrip("/") + reverse("payments:checkout-success")
+
+
+def _cancel_url(order: Order) -> str:
+    return getattr(settings, "SITE_URL", "").rstrip("/") + reverse("payments:checkout-cancel")
+
+
+# ---------------------------
+# Order extras (uses engagement.OrderExtras rows)
+# ---------------------------
+def _get_extra_amount(order: Order, name: str) -> Decimal:
     """
-    Compute the order total; respects your grand_total()/total() if present,
-    otherwise sums OrderItems (quantity * unit_price).
-    Discounts/tips should already be reflected at the Order level.
+    Fetch a single extra by name (e.g., 'tip', 'coupon_discount', 'loyalty_discount').
+    Returns Decimal('0.00') if not found.
     """
     try:
-        if hasattr(order, "grand_total"):
-            return _as_decimal(order.grand_total()).quantize(Decimal("0.01"))
-        if getattr(order, "total", None) is not None:
-            return _as_decimal(order.total).quantize(Decimal("0.01"))
-        total = Decimal("0.00")
-        for it in order.items.all():
-            qty = _as_decimal(getattr(it, "quantity", 0))
-            unit = _as_decimal(getattr(it, "unit_price", 0))
-            total += (qty * unit)
-        return total.quantize(Decimal("0.01"))
-    except Exception as e:
-        logger.exception("Failed computing order total: %s", e)
+        row = OrderExtras.objects.filter(order=order, name=name).order_by("-id").first()
+        return Decimal(str(row.amount)) if row else Decimal("0.00")
+    except Exception:
+        logger.exception("Failed to read OrderExtras '%s' for order %s", name, getattr(order, "id", None))
         return Decimal("0.00")
 
-def ensure_payment(order) -> Payment:
-    """
-    Ensure there's a Payment row per Order; keep amount/currency in sync.
-    """
-    currency = _currency()
-    pay, _ = Payment.objects.get_or_create(
-        order=order,
-        defaults={"currency": currency, "provider": Payment.PROVIDER_STRIPE},
-    )
 
-    amount = compute_order_total(order)
+def _set_extra_amount(order: Order, name: str, amount: Decimal) -> None:
+    """
+    Upsert a single extra by name.
+    """
     try:
-        if hasattr(pay, "amount"):
-            pay.amount = amount
-        if hasattr(pay, "currency"):
-            pay.currency = currency
-        pay.save(update_fields=[f for f in ["amount", "currency"] if hasattr(pay, f)])
+        obj, _ = OrderExtras.objects.get_or_create(order=order, name=name, defaults={"amount": Decimal("0.00")})
+        if Decimal(str(obj.amount)) != Decimal(str(amount)):
+            obj.amount = Decimal(str(amount)).quantize(Decimal("0.01"))
+            obj.save(update_fields=["amount"])
     except Exception:
-        pass
+        logger.exception("Failed to save OrderExtras '%s' for order %s", name, getattr(order, "id", None))
 
-    return pay
 
-def create_checkout_session(order):
+# ---------------------------
+# Totals
+# ---------------------------
+def compute_order_total(order: Order) -> Tuple[Decimal, Decimal]:
     """
-    Create a Stripe Checkout Session for the order.
-    IMPORTANT: include metadata={'order_id': <id>} so webhook/success can reconcile.
-    We use a single aggregated line item (simple, avoids price objects).
+    Returns (subtotal, tax) for the order items only (no tips/discounts).
+    Implementations may vary; keep API stable.
     """
-    if not stripe.api_key:
-        raise RuntimeError("Stripe secret key is not configured.")
+    subtotal = Decimal("0.00")
+    for it in order.items.all():
+        unit = Decimal(str(getattr(it, "unit_price", 0) or 0))
+        qty = int(getattr(it, "quantity", 0) or 0)
+        subtotal += (unit * qty)
+    subtotal = subtotal.quantize(Decimal("0.01"))
+    tax_rate = Decimal(str(getattr(settings, "SALES_TAX_RATE", 0) or 0))  # e.g. 0.075
+    tax = (subtotal * tax_rate).quantize(Decimal("0.01"))
+    return subtotal, tax
 
-    payment = ensure_payment(order)
-    amount = compute_order_total(order)
-    if amount <= 0:
-        raise ValueError("Order total must be greater than zero.")
 
-    success_url = f"{_site_url()}{reverse('payments:checkout_success')}?order={order.id}&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{_site_url()}{reverse('payments:checkout_cancel')}?order={order.id}"
-
-    line_items = [{
+def _build_line_items(order: Order, tip_amount: Decimal) -> List[Dict[str, Any]]:
+    """
+    Build Stripe Checkout line_items:
+    - One "Order #<id>" items line (subtotal+tax)
+    - "Tip" as a separate positive line item if > 0
+    Loyalty/coupon discount is passed via Checkout 'discounts' because Stripe does NOT allow negative unit_amount.
+    """
+    subtotal, tax = compute_order_total(order)
+    lines: List[Dict[str, Any]] = [{
         "price_data": {
             "currency": _currency(),
             "product_data": {"name": f"Order #{order.id}"},
-            "unit_amount": _money_cents(amount),
+            "unit_amount": _money_cents(subtotal + tax),
         },
         "quantity": 1,
     }]
+    if tip_amount and Decimal(tip_amount) > 0:
+        lines.append({
+            "price_data": {
+                "currency": _currency(),
+                "product_data": {"name": "Tip"},
+                "unit_amount": _money_cents(Decimal(tip_amount)),
+            },
+            "quantity": 1,
+        })
+    return lines
 
+
+def _apply_best_discount(order: Order, loyalty_amount: Decimal, coupon_amount: Decimal) -> Tuple[Dict[str, Any], Decimal, str]:
+    """
+    Create a one-off Stripe Coupon for amount_off = chosen discount (if any)
+    and return (discounts_param, chosen_amount, source_label) for Checkout Session.
+    """
+    amount, source = choose_better_discount(loyalty_amount, coupon_amount)
+    if amount <= 0:
+        return {}, Decimal("0.00"), "none"
+
+    # Create or reuse a short-lived coupon
+    try:
+        coupon = stripe.Coupon.create(
+            amount_off=_money_cents(amount),
+            currency=_currency(),
+            duration="once",
+            name=f"{source.title()} discount",
+        )
+        return {"discounts": [{"coupon": coupon["id"]}]}, amount, source
+    except Exception:
+        logger.exception("Failed to create Stripe coupon; proceeding without discount")
+        return {}, Decimal("0.00"), "none"
+
+
+# ---------------------------
+# Stripe Checkout
+# ---------------------------
+def create_checkout_session(order: Order):
+    """
+    Builds a Stripe Checkout Session with items + tip + best discount (loyalty vs coupon).
+    Stores resolved numbers as OrderExtras rows so invoices/receipts show correct lines.
+    """
+    success_url = _success_url(order)
+    cancel_url = _cancel_url(order)
+
+    # Resolve tip from PendingTip or existing extras
+    user = getattr(order, "user", None) or getattr(order, "created_by", None)
+    tip_amount = _get_extra_amount(order, "tip")
+    if tip_amount <= 0:
+        # fall back to pending tip recorder
+        pending = get_pending_tip_for_user(user)
+        if pending > 0:
+            tip_amount = pending
+            _set_extra_amount(order, "tip", tip_amount)
+
+    # Loyalty vs Coupon (exclude tips from base)
+    subtotal, tax = compute_order_total(order)
+    loyalty_amount, loyalty_msg = best_loyalty_discount_for_user(user, subtotal=subtotal + tax)
+    coupon_amount = _get_extra_amount(order, "coupon_discount")  # if your flow saves coupon elsewhere, adapt here
+
+    discounts_param, chosen_amount, chosen_source = _apply_best_discount(order, loyalty_amount, coupon_amount)
+    if chosen_source == "loyalty" and loyalty_msg:
+        _set_extra_amount(order, "loyalty_discount", chosen_amount)
+    elif chosen_source == "coupon":
+        _set_extra_amount(order, "coupon_discount", chosen_amount)
+
+    # Build line items (tip shown as its own line)
+    line_items = _build_line_items(order, tip_amount)
+
+    # Create the session
     session = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
         line_items=line_items,
         metadata={"order_id": str(order.id)},
-        client_reference_id=str(order.id),  # redundancy
+        client_reference_id=str(order.id),
         success_url=success_url,
         cancel_url=cancel_url,
+        **(discounts_param or {}),
     )
 
-    # Persist identifiers
+    # Update Payment record if present
     try:
-        if hasattr(payment, "stripe_session_id"):
-            payment.stripe_session_id = session.get("id", "") or getattr(session, "id", "")
-        if hasattr(payment, "stripe_payment_intent"):
-            payment.stripe_payment_intent = session.get("payment_intent", "") or getattr(session, "payment_intent", "") or ""
-        payment.save(update_fields=[f for f in ["stripe_session_id", "stripe_payment_intent"] if hasattr(payment, f)])
+        pay, _ = Payment.objects.get_or_create(order=order, defaults={"provider": getattr(Payment, "PROVIDER_STRIPE", "stripe")})
+        pay.stripe_session_id = session.get("id")
+        pay.stripe_checkout_url = session.get("url")
+        pay.currency = _currency()
+        pay.save(update_fields=["stripe_session_id", "stripe_checkout_url", "currency"])
     except Exception:
-        logger.exception("Failed to persist Stripe IDs for order %s", order.id)
+        logger.exception("Failed to link Payment to Stripe Session for order %s", order.id)
+
+    # Persist final numbers for invoice/receipt lines (excluding tips from base)
+    try:
+        final_total = (subtotal + tax - (chosen_amount or Decimal("0.00"))).quantize(Decimal("0.01"))
+        _set_extra_amount(order, "final_total_excl_tip", final_total)
+    except Exception:
+        logger.exception("Failed to save final totals for order %s", order.id)
 
     return session
 
-def _run_hooks(order):
+
+# ---------------------------
+# Invoice PDF (optional)
+# ---------------------------
+def generate_order_invoice_pdf(order: Order) -> tuple[str, bytes] | tuple[None, None]:
     """
-    Run post-payment hooks via Celery if available, else inline.
+    Create a minimal invoice PDF that includes a 'Tip' line and discounts from OrderExtras.
+    Plug into your existing pipeline; left simple to avoid breaking current PDF styling.
     """
-    try:
-        if _hooks_task:
-            _hooks_task.delay(order.id)
-        else:
-            from payments.post_payment import run_post_payment_hooks
-            run_post_payment_hooks(order, payment=getattr(order, "payment", None))
-    except Exception:
-        logger.exception("Post-payment hooks failed for order %s", getattr(order, "id", None))
-
-def mark_paid(order, payment_intent_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
-    """
-    Canonical place to flip Payment + Order to paid. Idempotent by design.
-    After persisting, trigger post-payment hooks safely.
-    """
-    try:
-        pay = ensure_payment(order)
-        changed = False
-
-        if hasattr(pay, "is_paid") and not pay.is_paid:
-            pay.is_paid = True
-            changed = True
-        if payment_intent_id and hasattr(pay, "stripe_payment_intent"):
-            pay.stripe_payment_intent = payment_intent_id
-            changed = True
-        if session_id and hasattr(pay, "stripe_session_id"):
-            pay.stripe_session_id = session_id
-            changed = True
-        if changed:
-            fields = [f for f in ["is_paid", "stripe_payment_intent", "stripe_session_id"] if hasattr(pay, f)]
-            pay.save(update_fields=fields)
-
-        # Update Order flags/idempotent
-        dirty_fields = []
-        if hasattr(order, "status") and getattr(order, "status", "") != "PAID":
-            order.status = "PAID"
-            dirty_fields.append("status")
-        if hasattr(order, "is_paid") and not getattr(order, "is_paid", False):
-            order.is_paid = True
-            dirty_fields.append("is_paid")
-        if hasattr(order, "paid_at") and not getattr(order, "paid_at", None):
-            from django.utils import timezone
-            order.paid_at = timezone.now()
-            dirty_fields.append("paid_at")
-        if dirty_fields:
-            order.save(update_fields=dirty_fields)
-
-        # ---- Post-payment hooks (safe, idempotent)
-        _run_hooks(order)
-
-    except Exception as e:
-        logger.exception("mark_paid failed: %s", e)
-
-# ---------- Optional: PDF invoice (safe no-op if reportlab not installed) ----------
-def generate_order_invoice_pdf(order) -> Tuple[Optional[str], Optional[bytes]]:
     try:
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
         from reportlab.pdfgen import canvas
     except Exception:
-        logger.info("reportlab not installed; skipping invoice pdf generation")
-        return (None, None)
+        logger.warning("reportlab not installed; skipping invoice PDF generation")
+        return None, None
+
+    subtotal, tax = compute_order_total(order)
+    tip = _get_extra_amount(order, "tip")
+    loyalty = _get_extra_amount(order, "loyalty_discount")
+    coupon = _get_extra_amount(order, "coupon_discount")
+    final_total = _get_extra_amount(order, "final_total_excl_tip") or (subtotal + tax)
 
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=A4)
-    width, height = A4
+    y = 800
 
-    y = height - 30 * 1 * mm
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(30 * mm, y, f"Invoice — Order #{order.id}")
-    y -= 12 * mm
+    def line(txt: str) -> None:
+        nonlocal y
+        c.drawString(50, y, txt)
+        y -= 16
 
-    c.setFont("Helvetica", 11)
-    total = compute_order_total(order)
-    c.drawString(30 * mm, y, f"Total: {total} {_currency().upper()}")
-    y -= 8 * mm
-
-    try:
-        for it in order.items.all():
-            name = getattr(getattr(it, "menu_item", None), "name", "Item")
-            qty = getattr(it, "quantity", 0)
-            unit = getattr(it, "unit_price", 0)
-            c.drawString(30 * mm, y, f"- {name} x {qty} @ {unit}")
-            y -= 6 * mm
-    except Exception:
-        pass
-
+    line(f"Invoice for Order #{order.id}")
+    line("")
+    line(f"Items Subtotal: {subtotal}")
+    line(f"Tax: {tax}")
+    if coupon > 0:
+        line(f"Coupon Discount: -{coupon}")
+    if loyalty > 0:
+        line(f"Loyalty Discount: -{loyalty}")
+    if tip > 0:
+        line(f"Tip: {tip}")
+    line(f"Total (excl. tip): {final_total}")
+    line(f"Grand Total: {(final_total + tip).quantize(Decimal('0.01'))}")
     c.showPage()
     c.save()
-    data = buf.getvalue()
-    buf.close()
 
     filename = f"invoice_order_{order.id}.pdf"
-    return (filename, data)
+    return filename, buf.getvalue()
 
-def save_invoice_pdf_file(order) -> Optional[str]:
+
+def save_invoice_pdf_file(order: Order) -> Optional[str]:
     try:
         filename, pdf_bytes = generate_order_invoice_pdf(order)
         if not filename or not pdf_bytes:
@@ -245,3 +276,44 @@ def save_invoice_pdf_file(order) -> Optional[str]:
     except Exception as e:
         logger.exception("Failed to save invoice PDF: %s", e)
         return None
+
+
+# ---------------------------
+# Payment finalization hook (needed by payments/views.py)
+# ---------------------------
+def mark_paid(order: Order, stripe_event: Optional[dict[str, Any]] = None) -> None:
+    """
+    Finalize order after Stripe confirms payment (webhook or success handler).
+    - Mark as PAID / is_paid
+    - Set paid_at
+    - Clear user's pending tips
+    - Do not modify other features (invoices, coupons, RMS admin, etc.)
+    """
+    if not order:
+        return
+    if getattr(order, "is_paid", False):
+        # idempotent
+        return
+
+    with transaction.atomic():
+        # Mark paid
+        if hasattr(order, "is_paid"):
+            order.is_paid = True
+        if hasattr(order, "status"):
+            order.status = "PAID"
+        if hasattr(order, "paid_at"):
+            order.paid_at = timezone.now()
+        order.save(update_fields=[f for f in ["is_paid", "status", "paid_at"] if hasattr(order, f)])
+
+        # Clear pending tips for this user
+        user = getattr(order, "user", None) or getattr(order, "created_by", None)
+        try:
+            clear_pending_tips_for_user(user)
+        except Exception:
+            logger.exception("Failed to clear pending tips for user after payment (order %s)", order.id)
+
+        # Optionally persist a final invoice PDF
+        try:
+            save_invoice_pdf_file(order)
+        except Exception:
+            logger.exception("Failed to save invoice for order %s", order.id)

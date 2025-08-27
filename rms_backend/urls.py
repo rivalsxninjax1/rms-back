@@ -13,13 +13,17 @@ urlpatterns = [
     # Normal session endpoints for login/register/logout/whoami
     path("accounts/", include(("accounts.urls", "accounts"), namespace="accounts_session")),
 
-    # APIs (unchanged)
-    path("api/", include(("menu.urls", "menu"), namespace="menu")),
-    path("api/orders/", include(("orders.urls", "orders"), namespace="orders")),
+    # APIs
+    path("api/", include(("orders.urls", "orders"), namespace="orders_api")),
+    path("api/payments/", include(("payments.urls", "payments"), namespace="payments")),
+    path("api/menu/", include(("menu.urls", "menu"), namespace="menu_api")),
+    path("api/reservations/", include(("reservations.urls", "reservations"), namespace="reservations_api")),
 
-    # Payments
-    path("payments/", include(("payments.urls", "payments"), namespace="payments")),
+    # Portal routes
     path("reserve/", include("reservations.urls_portal", namespace="reservations_portal")),
+
+    # Loyalty preview (NEW)
+    path("loyalty/", include(("loyality.urls", "loyality"), namespace="loyalty")),
 
     # Storefront pages
     path("", include(("storefront.urls", "storefront"), namespace="storefront")),
@@ -28,7 +32,7 @@ urlpatterns = [
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-# Error handlers (Step 4)
+# Error handlers
 handler400 = "storefront.views.http_400"
 handler403 = "storefront.views.http_403"
 handler404 = "storefront.views.http_404"

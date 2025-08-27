@@ -9,6 +9,12 @@ from django.urls import reverse_lazy
 from django.views.generic import TemplateView
 from django.utils import timezone
 
+
+from decimal import Decimal
+from django.views.decorators.http import require_POST
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+
 # Optional, robust imports
 try:
     from menu.models import MenuItem
@@ -175,3 +181,24 @@ def http_404(request, exception=None):
 
 def http_500(request):
     return render(request, "errors/500.html", status=500)
+def _ctx(page, **extra):
+    # existing helper in your file; if not present, just return extra
+    data = {"page": page}
+    data.update(extra)
+    return data
+
+@require_POST
+@csrf_exempt
+def api_cart_set_tip(request):
+    try:
+        body = json.loads(request.body.decode() or "{}")
+    except Exception:
+        body = {}
+    raw = body.get("tip_amount", 0)
+    try:
+        tip = max(Decimal(str(raw)), Decimal("0.00"))
+    except Exception:
+        tip = Decimal("0.00")
+    request.session["cart_tip_amount"] = float(tip)
+    request.session.modified = True
+    return JsonResponse({"ok": True, "tip_amount": float(tip)})

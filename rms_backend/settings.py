@@ -54,8 +54,10 @@ INSTALLED_APPS = [
     "billing",
     "payments",
     "coupons",
-     "loyality",
+    "loyality",
     "storefront",
+    "engagement",
+    "orders_extras",
 ]
 
 

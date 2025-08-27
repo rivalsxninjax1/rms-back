@@ -1,70 +1,81 @@
-# FILE: loyalty/models.py
 from __future__ import annotations
 
 from decimal import Decimal
-from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
 
-class LoyaltyConfig(models.Model):
-    TYPE_PERCENT = "PERCENT"
-    TYPE_FIXED = "FIXED"
-    TYPES = [(TYPE_PERCENT, "Percent"), (TYPE_FIXED, "Fixed amount")]
+class TipLoyaltySetting(models.Model):
+    """
+    Single-row configuration for tip-based loyalty.
 
-    threshold_tip_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("50.00"))
-    reward_type = models.CharField(max_length=10, choices=TYPES, default=TYPE_PERCENT)
-    reward_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("10.00"))
+    Fields:
+        active: toggle ON/OFF the loyalty discount logic
+        threshold_tip_total: when a user's cumulative *tip* reaches this amount,
+                             they qualify for the discount (fixed amount)
+        discount_amount: fixed currency amount to deduct (not a percent)
+        message_template: message shown to the user when discount applies
+        updated_at: auto timestamp of last modification
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    We expose a convenience classmethod get_solo() to read or create the single row.
+    """
+
+    active = models.BooleanField(default=True)
+    threshold_tip_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    message_template = models.TextField(
+        blank=True,
+        default="You are our loyal customer and you get a discount!",
+        help_text="Template shown when the loyalty discount applies.",
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
-    def __str__(self):
-        return "Loyalty Configuration"
+    class Meta:
+        app_label = "loyality"
+        verbose_name = "Tip Loyalty Setting"
+        verbose_name_plural = "Tip Loyalty Settings"
 
+    def __str__(self) -> str:  # pragma: no cover
+        return f"LoyaltySettings(active={self.active}, threshold={self.threshold_tip_total}, discount={self.discount_amount})"
+
+    # ---- Singleton helper -------------------------------------------------
     @classmethod
-    def get_solo(cls) -> "LoyaltyConfig":
-        obj, _ = cls.objects.get_or_create(pk=1)
+    def get_solo(cls) -> "TipLoyaltySetting":
+        """
+        Ensure we always have a single row. Returns that row.
+        """
+        obj, _ = cls.objects.get_or_create(pk=1, defaults={
+            "active": True,
+            "threshold_tip_total": Decimal("0.00"),
+            "discount_amount": Decimal("0.00"),
+        })
         return obj
 
+    # ---- Safe accessors ---------------------------------------------------
+    @property
+    def is_active(self) -> bool:
+        return bool(self.active)
 
-class LoyaltyProgress(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="loyalty_progress")
-    total_tip = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
-    last_updated = models.DateTimeField(auto_now=True)
+    def qualifies(self, total_tip_for_user: Decimal) -> bool:
+        """
+        Returns True if the user's accumulated TIP total meets the threshold.
+        """
+        try:
+            total_tip_for_user = Decimal(total_tip_for_user or 0)
+        except Exception:
+            total_tip_for_user = Decimal("0.00")
+        return self.active and total_tip_for_user >= (self.threshold_tip_total or Decimal("0.00"))
 
-    def __str__(self):
-        return f"{self.user} – tipped {self.total_tip}"
+    def discount_value(self) -> Decimal:
+        """
+        Fixed currency amount (>= 0).
+        """
+        try:
+            amt = Decimal(self.discount_amount or 0)
+        except Exception:
+            amt = Decimal("0.00")
+        return max(Decimal("0.00"), amt)
 
-    def reset(self):
-        self.total_tip = Decimal("0.00")
-        self.save(update_fields=["total_tip"])
-
-
-class LoyaltyReward(models.Model):
-    TYPE_PERCENT = "PERCENT"
-    TYPE_FIXED = "FIXED"
-
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="loyalty_rewards")
-    reward_type = models.CharField(max_length=10, choices=[(TYPE_PERCENT,"Percent"),(TYPE_FIXED,"Fixed")])
-    reward_amount = models.DecimalField(max_digits=12, decimal_places=2)
-    is_redeemed = models.BooleanField(default=False)
-    reserved_order_id = models.IntegerField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    redeemed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return f"{self.user} reward {self.reward_type} {self.reward_amount} redeemed={self.is_redeemed}"
-
-    def as_discount_amount(self, subtotal):
-        from decimal import Decimal
-        if self.reward_type == self.TYPE_PERCENT:
-            disc = (subtotal * (self.reward_amount / Decimal("100"))).quantize(Decimal("0.01"))
-        else:
-            disc = Decimal(str(self.reward_amount)).quantize(Decimal("0.01"))
-        if disc > subtotal:
-            disc = subtotal
-        return disc
+    def updated(self):
+        self.updated_at = timezone.now()
+        self.save(update_fields=["updated_at"])

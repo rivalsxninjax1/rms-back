@@ -1,0 +1,45 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Top Tippers{% endblock %}
+
+{% block content %}
+<div class="container">
+  <h1>Top Tippers (by total tips paid)</h1>
+
+  <form method="get" style="margin: 12px 0; display:flex; gap:12px; flex-wrap:wrap;">
+    <input type="text" name="q" placeholder="Search user" value="{{ q }}" style="flex:1; min-width:200px;">
+    <label>From: <input type="date" name="from" value="{{ date_from }}"></label>
+    <label>To: <input type="date" name="to" value="{{ date_to }}"></label>
+    <button type="submit" class="button">Filter</button>
+  </form>
+
+  <table class="admin-table" style="width:100%; border-collapse:collapse; margin-top:16px;">
+    <thead>
+      <tr>
+        <th style="border-bottom:1px solid #ddd; text-align:left;">Rank</th>
+        <th style="border-bottom:1px solid #ddd; text-align:left;">User</th>
+        <th style="border-bottom:1px solid #ddd; text-align:right;">Total Tip</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          <td style="padding:6px 8px;">{{ row.rank }}</td>
+          <td style="padding:6px 8px;">{{ row.user_display }}</td>
+          <td style="padding:6px 8px; text-align:right;">{{ row.total_tip }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" style="padding:6px 8px;">No results</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div style="margin-top:16px; padding:12px; background:#f9f9f9; border:1px solid #ddd;">
+    <strong>Loyalty Settings:</strong><br/>
+    Active: {{ active }}<br/>
+    Threshold: {{ threshold }}<br/>
+    Discount: {{ discount }}<br/>
+  </div>
+</div>
+{% endblock %}
