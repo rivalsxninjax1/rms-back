@@ -1,0 +1,66 @@
+<!-- FILE: storefront/templates/storefront/cart.html -->
+{% extends "storefront/base.html" %}
+{% block title %}Your Cart{% endblock %}
+
+{% block content %}
+  <h1>Your Cart</h1>
+
+  <!-- Cart items list rendered by cart-render.js -->
+  <div id="cart-items" class="cart-list"></div>
+
+  <!-- Inline Order Method -->
+  <div id="order-method-inline" style="margin:16px 0;">
+    <div style="font-weight:600; margin-bottom:8px;">Order Method</div>
+    <label style="margin-right:16px;">
+      <input type="radio" name="order_method_inline" value="DINE_IN"> Dine-in
+    </label>
+    <label style="margin-right:16px;">
+      <input type="radio" name="order_method_inline" value="UBER_EATS"> Uber Eats
+    </label>
+    <label>
+      <input type="radio" name="order_method_inline" value="DOORDASH"> DoorDash
+    </label>
+
+    <!-- Dine-in table SELECT (from RMS Admin Tables) -->
+    <div id="table-select-wrap" style="margin-top:10px; display:none;">
+      <label>Table&nbsp;
+        <select id="table-select" style="min-width: 160px;">
+          <option value="">Choose your table…</option>
+          {% if tables %}
+            {% for t in tables %}
+              <option value="{{ t.id }}" data-number="{{ t.table_number }}">
+                {% if t.location %}{{ t.location.name }} — {% endif %}Table {{ t.table_number }}
+              </option>
+            {% endfor %}
+          {% endif %}
+        </select>
+      </label>
+      <small class="muted">This list is synced with RMS Admin &rarr; Tables.</small>
+    </div>
+  </div>
+
+  <!-- Coupon just above Pay -->
+  <div id="coupon-row" style="display:flex; gap:8px; align-items:center; margin: 10px 0 6px;">
+    <input id="coupon-code" placeholder="Coupon code" style="flex:1; max-width:240px;">
+    <button id="apply-coupon" class="btn btn-secondary" type="button">Apply</button>
+    <span id="coupon-msg" class="muted" style="margin-left:8px;"></span>
+  </div>
+
+  <div class="cart-actions" style="margin-top: 12px;">
+    <button id="pay-btn" class="btn btn-primary" disabled>Pay with Card</button>
+  </div>
+
+  <!-- Ensure CSRF cookie exists for fetch() POSTs -->
+  <form style="display:none">{% csrf_token %}</form>
+
+  <!-- Toggle table select when method changes -->
+  <script>
+    document.addEventListener("change", (e)=>{
+      if (e.target && e.target.name === "order_method_inline"){
+        const v = e.target.value;
+        const wrap = document.getElementById("table-select-wrap");
+        if (wrap) wrap.style.display = (v === "DINE_IN") ? "" : "none";
+      }
+    });
+  </script>
+{% endblock %}

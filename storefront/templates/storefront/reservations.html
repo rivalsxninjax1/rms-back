@@ -1,0 +1,58 @@
+<!-- FILE: storefront/templates/storefront/reservations.html -->
+{% extends "storefront/base.html" %}
+{% block title %}Reservations{% endblock %}
+
+{% block content %}
+  <h1>Reservations</h1>
+
+  {% if request.user.is_authenticated %}
+    <section style="margin-top:18px;">
+      <h3 style="margin-bottom:8px;">Upcoming</h3>
+      {% if upcoming %}
+        <ul style="padding-left: 18px;">
+          {% for r in upcoming %}
+            <li>
+              <strong>{{ r.start_time|date:"M d, Y H:i" }}</strong>
+              — {% if r.table.location %}{{ r.table.location.name }} — {% endif %}Table {{ r.table.table_number }}
+              {% if r.party_size %}(party {{ r.party_size }}){% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">No upcoming reservations.</p>
+      {% endif %}
+    </section>
+
+    <section style="margin-top:18px;">
+      <h3 style="margin-bottom:8px;">Recent (last 30 days)</h3>
+      {% if recent %}
+        <ul style="padding-left: 18px;">
+          {% for r in recent %}
+            <li>
+              <strong>{{ r.start_time|date:"M d, Y H:i" }}</strong>
+              — {% if r.table.location %}{{ r.table.location.name }} — {% endif %}Table {{ r.table.table_number }}
+              {% if r.party_size %}(party {{ r.party_size }}){% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">No recent reservations.</p>
+      {% endif %}
+    </section>
+  {% else %}
+    <p class="muted">Please <a href="#" id="reservations-login-link">log in</a> to see your reservations.</p>
+    <script>
+      document.addEventListener("DOMContentLoaded", ()=>{
+        const a = document.getElementById("reservations-login-link");
+        if (a){
+          a.addEventListener("click", (e)=>{ e.preventDefault(); (window.openAuth || function(){ location.href='/login/'; })('login'); });
+        }
+      });
+    </script>
+  {% endif %}
+
+  <hr style="margin:24px 0">
+
+  <!-- Booking UI (kept simple; routes to your portal mounted at /reserve/) -->
+  {% include "storefront/_reservation_form.html" %}
+{% endblock %}
