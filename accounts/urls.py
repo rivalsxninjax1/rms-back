@@ -7,7 +7,7 @@ from .views import (
     SessionLogout,
     SessionLoginJSON,
     RegisterJSON,
-    MeView,
+    MeView,  # NOTE: this is a FUNCTION-BASED VIEW in your codebase
 )
 
 app_name = "accounts"
@@ -20,9 +20,13 @@ urlpatterns = [
 
     # Session check + profile
     path("auth/whoami/", whoami, name="whoami"),
-    path("me/", MeView.as_view(), name="me"),
+    # FIX: MeView is a function, so we must NOT call .as_view()
+    path("me/", MeView, name="me"),
 
     # Optional: keep these if other parts of your stack still need them
     path("token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("token/verify/", TokenVerifyView.as_view(), name="token_verify"),
+
+    # Compatibility alias used by some storefront JS for JWT refresh
+    path("jwt/refresh/", TokenRefreshView.as_view(), name="jwt_refresh"),
 ]

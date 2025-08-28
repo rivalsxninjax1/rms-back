@@ -1,24 +1,22 @@
+from __future__ import annotations
+
 from django.contrib import admin
-from django.apps import apps
-from django.contrib.admin.sites import AlreadyRegistered
-from .models import UserTipAggregate
+
+from .models import DailySales, ShiftReport
 
 
-# Keep auto-registration for everything else
-for m in apps.get_app_config("reports").get_models():
-    if m is UserTipAggregate:
-        continue
-    try:
-        admin.site.register(m)
-    except AlreadyRegistered:
-        pass
+@admin.register(DailySales)
+class DailySalesAdmin(admin.ModelAdmin):
+    list_display = ("date", "total_orders", "subtotal_cents", "tip_cents", "discount_cents", "total_cents", "created_at")
+    date_hierarchy = "date"
+    ordering = ("-date", "-id")
+    readonly_fields = ("created_at",)
 
 
-@admin.register(UserTipAggregate)
-class UserTipAggregateAdmin(admin.ModelAdmin):
-    list_display = ("user", "rank", "total_tip", "avg_tip", "max_tip", "last_tip_date")
-    list_filter = ("rank",)
-    date_hierarchy = "last_tip_date"
-    search_fields = ("user__username", "user__email")
-    ordering = ("-total_tip",)
-    readonly_fields = tuple(list_display)
+@admin.register(ShiftReport)
+class ShiftReportAdmin(admin.ModelAdmin):
+    list_display = ("date", "shift", "staff", "orders_count", "total_cents", "created_at")
+    list_filter = ("shift",)
+    date_hierarchy = "date"
+    ordering = ("-date", "shift", "-id")
+    readonly_fields = ("created_at",)

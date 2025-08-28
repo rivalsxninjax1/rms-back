@@ -1,25 +1,54 @@
+from __future__ import annotations
+
 from django.db import models
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
 
 
-class UserTipAggregate(models.Model):
+class DailySales(models.Model):
     """
-    Managed=False model backed by a DB VIEW (see migration 0002).
-    Columns:
-      user_id, username, rank, total_tip, avg_tip, max_tip, last_tip_date
+    Minimal Daily Sales aggregate so `reports.views` can import and the
+    admin/API can read something stable. Amounts are stored in integer cents.
     """
-    user = models.OneToOneField(User, primary_key=True, on_delete=models.DO_NOTHING, related_name="tip_aggregate")
-    username = models.CharField(max_length=150)
-    rank = models.CharField(max_length=16)
-    total_tip = models.DecimalField(max_digits=12, decimal_places=2)
-    avg_tip = models.DecimalField(max_digits=12, decimal_places=2)
-    max_tip = models.DecimalField(max_digits=12, decimal_places=2)
-    last_tip_date = models.DateField(null=True, blank=True)
+    date = models.DateField(unique=True)
+    total_orders = models.PositiveIntegerField(default=0)
+
+    subtotal_cents = models.PositiveIntegerField(default=0)
+    tip_cents = models.PositiveIntegerField(default=0)
+    discount_cents = models.PositiveIntegerField(default=0)
+    total_cents = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        managed = False
-        db_table = "reports_user_tip_agg"
-        verbose_name = "User Tips (Aggregate)"
-        verbose_name_plural = "User Tips (Aggregate)"
+        ordering = ["-date", "-id"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"DailySales {self.date} (orders={self.total_orders})"
+
+
+class ShiftReport(models.Model):
+    """
+    Minimal shift report record (non-blocking). Keeps the interface that other
+    parts of the code expect: a per-shift roll-up with integer-cents totals.
+    """
+    SHIFT_CHOICES = [
+        ("morning", "Morning"),
+        ("afternoon", "Afternoon"),
+        ("evening", "Evening"),
+        ("night", "Night"),
+    ]
+
+    date = models.DateField()
+    shift = models.CharField(max_length=16, choices=SHIFT_CHOICES, default="evening")
+    staff = models.CharField(max_length=120, blank=True, help_text="Shift lead or cashier")
+
+    orders_count = models.PositiveIntegerField(default=0)
+    total_cents = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("date", "shift")]
+        ordering = ["-date", "shift", "-id"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"ShiftReport {self.date} {self.shift} (orders={self.orders_count})"

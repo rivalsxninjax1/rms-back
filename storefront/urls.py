@@ -2,6 +2,7 @@
 from django.urls import path
 from . import views
 from .views import MenuItemsView, MyOrdersView
+from accounts.views import whoami as session_ping  # root-level session ping for JS
 
 app_name = "storefront"
 
@@ -23,6 +24,9 @@ urlpatterns = [
     path("login/", views.login_page, name="login"),
     path("reservations/", views.reservations, name="reservations"),
 
-    # NEW: save tip to session
+    # NEW: save tip to session (kept from original)
     path("api/cart/tip/", views.api_cart_set_tip, name="api_cart_set_tip"),
+
+    # NEW: session/CSRF ping for frontend JS (safe alias to accounts.whoami)
+    path("session/ping/", session_ping, name="session_ping"),
 ]

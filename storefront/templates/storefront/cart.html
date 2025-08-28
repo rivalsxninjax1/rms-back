@@ -1,99 +1,408 @@
 {% extends "storefront/base.html" %}
-{% block title %}Your Cart{% endblock %}
+{% load static %}
+{% block title %}Your Cart – RMS{% endblock %}
 
 {% block content %}
-  <h1>Your Cart</h1>
-
-  <!-- Cart items list (rendered by JS) -->
-  <div id="cart-items" class="cart-list"></div>
-
-  <!-- Coupon input -->
-  <div id="coupon-row" style="display:flex; gap:8px; align-items:center; margin: 10px 0 6px;">
-    <input id="coupon-code" placeholder="Coupon code" style="flex:1; max-width:240px;">
-    <button id="apply-coupon" class="btn btn-secondary" type="button">Apply</button>
-    <span id="coupon-msg" class="muted" style="margin-left:8px;"></span>
+<div class="container" style="max-width:800px;margin:24px auto;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;">
+    <h1 style="margin:0;">Your Cart</h1>
+    <a href="{% url 'storefront:menu' %}" style="color:#007bff;text-decoration:none;">← Continue Shopping</a>
   </div>
 
-  <!-- Loyalty message (fetched from /loyalty/preview/) -->
-  <div id="loyalty-msg" class="muted" style="margin: 6px 0 8px;"></div>
+  <!-- Cart Items Table -->
+  <div id="cart-container">
+    <div id="cart-empty" style="text-align:center;padding:40px;display:none;">
+      <h3 style="color:#666;">Your cart is empty</h3>
+      <p>Add some delicious items from our menu!</p>
+      <a href="{% url 'storefront:menu' %}" class="btn btn-primary">Browse Menu</a>
+    </div>
+    
+    <div id="cart-items" style="display:none;">
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+        <thead>
+          <tr style="border-bottom:2px solid #eee;">
+            <th style="text-align:left;padding:12px;"></th>
+            <th style="text-align:left;padding:12px;">Item</th>
+            <th style="text-align:left;padding:12px;">Price</th>
+            <th style="text-align:center;padding:12px;">Quantity</th>
+            <th style="text-align:right;padding:12px;">Total</th>
+          </tr>
+        </thead>
+        <tbody id="cart-items-body">
+          <!-- Items populated by JavaScript -->
+        </tbody>
+      </table>
+      
+      <!-- Order Options -->
+      <div style="border:1px solid #eee;border-radius:8px;padding:20px;margin-bottom:20px;">
+        <h3 style="margin:0 0 16px;font-size:18px;">Order Options</h3>
+        
+        <!-- Delivery Method -->
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-weight:600;margin-bottom:8px;">Delivery Method</label>
+          <div>
+            <label style="margin-right:16px;font-weight:normal;">
+              <input type="radio" name="delivery_method" value="DINE_IN" data-delivery="DINE_IN" checked> Dine In
+            </label>
+            <label style="margin-right:16px;font-weight:normal;">
+              <input type="radio" name="delivery_method" value="TAKEAWAY" data-delivery="TAKEAWAY"> Takeaway
+            </label>
+            <label style="font-weight:normal;">
+              <input type="radio" name="delivery_method" value="DELIVERY" data-delivery="DELIVERY"> Delivery
+            </label>
+          </div>
+        </div>
 
-  <!-- Inline Order Method -->
-  <div id="order-method-inline" style="margin:16px 0;">
-    <div style="font-weight:600; margin-bottom:8px;">Order Method</div>
-    <label style="margin-right:16px;">
-      <input type="radio" name="order_method_inline" value="DINE_IN"> Dine-in
-    </label>
-    <label style="margin-right:16px;">
-      <input type="radio" name="order_method_inline" value="UBER_EATS"> Uber Eats
-    </label>
-    <label>
-      <input type="radio" name="order_method_inline" value="DOORDASH"> DoorDash
-    </label>
+        <!-- Coupon Code -->
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-weight:600;margin-bottom:8px;">Coupon Code</label>
+          <div style="display:flex;gap:8px;">
+            <input id="coupon-input" type="text" placeholder="Enter coupon code" style="flex:1;padding:8px 12px;border:1px solid #ddd;border-radius:6px;">
+            <button id="apply-coupon-btn" class="btn btn-secondary">Apply</button>
+          </div>
+          <div id="coupon-message" style="margin-top:8px;font-size:14px;"></div>
+        </div>
+
+        <!-- Tip -->
+        <div style="margin-bottom:16px;">
+          <label style="display:block;font-weight:600;margin-bottom:8px;">Add Tip</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="tip-input" type="number" min="0" step="0.01" value="0" data-tip style="width:120px;padding:8px 12px;border:1px solid #ddd;border-radius:6px;">
+            <span>NPR</span>
+            <div style="margin-left:16px;">
+              <button type="button" onclick="setTipPercent(10)" class="btn-tip">10%</button>
+              <button type="button" onclick="setTipPercent(15)" class="btn-tip">15%</button>
+              <button type="button" onclick="setTipPercent(20)" class="btn-tip">20%</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Cart Totals -->
+      <div style="border:1px solid #eee;border-radius:8px;padding:20px;margin-bottom:20px;background:#f9f9f9;">
+        <h3 style="margin:0 0 16px;font-size:18px;">Order Summary</h3>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+          <span>Subtotal:</span>
+          <span data-cart-subtotal>NPR 0.00</span>
+        </div>
+        <div id="discount-row" style="display:flex;justify-content:space-between;margin-bottom:8px;color:#10b981;display:none;">
+          <span>Discount:</span>
+          <span>-NPR <span data-cart-discount>0.00</span></span>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+          <span>Tip:</span>
+          <span data-cart-tip>NPR 0.00</span>
+        </div>
+        <hr style="margin:12px 0;border:none;border-top:1px solid #ddd;">
+        <div style="display:flex;justify-content:space-between;font-size:18px;font-weight:bold;">
+          <span>Total:</span>
+          <span data-cart-total>NPR 0.00</span>
+        </div>
+      </div>
+
+      <!-- Cart Actions -->
+      <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button data-cart-clear class="btn btn-outline">Clear Cart</button>
+        <button id="checkout-btn" class="btn btn-primary" style="padding:12px 24px;">Proceed to Checkout</button>
+      </div>
+    </div>
   </div>
+</div>
 
-  <!-- Dine-in table select (hidden until DINE_IN) -->
-  <div id="table-select-wrap" style="display:none; margin:12px 0;">
-    <label style="font-weight:600;">Select a table:</label>
-    <select id="table-select" style="margin-left:8px; min-width:240px;">
-      <option value="">-- Choose a table --</option>
-      {% for t in tables %}
-        <option value="{{ t.id }}">Table {{ t.table_number }} ({{ t.location.name }}, cap {{ t.capacity }})</option>
-      {% endfor %}
-    </select>
-    <small style="margin-left:8px;">(Holds for <span id="hold-mins">{{ RESERVATION_HOLD_MINUTES|default:20 }}</span> mins during payment)</small>
-  </div>
+<style>
+  .btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    text-decoration: none;
+    display: inline-block;
+  }
+  
+  .btn-primary {
+    background: #007bff;
+    color: white;
+  }
+  
+  .btn-primary:hover {
+    background: #0056b3;
+  }
+  
+  .btn-secondary {
+    background: #6c757d;
+    color: white;
+  }
+  
+  .btn-secondary:hover {
+    background: #5a6268;
+  }
+  
+  .btn-outline {
+    background: transparent;
+    color: #6c757d;
+    border: 1px solid #6c757d;
+  }
+  
+  .btn-outline:hover {
+    background: #6c757d;
+    color: white;
+  }
 
-  <!-- Tip input -->
-  <div id="tip-wrap" style="margin:16px 0;">
-    <label for="tip-input" style="font-weight:600;">Wanna leave a tip?</label>
-    <input id="tip-input" type="number" min="0" step="0.01" value="0.00" style="margin-left:8px; width:120px;"/>
-    <button id="save-tip-btn" class="btn btn-sm" style="margin-left:8px;">Save Tip</button>
-    <small id="tip-msg" style="margin-left:8px; color:#666;"></small>
-  </div>
+  .btn-tip {
+    background: #f8f9fa;
+    border: 1px solid #ddd;
+    padding: 4px 8px;
+    margin: 0 2px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  
+  .btn-tip:hover {
+    background: #e9ecef;
+  }
 
-  <!-- Totals -->
-  <div id="cart-totals" style="margin:12px 0; font-weight:600;">
-    Subtotal: <span id="subtotal">NPR 0.00</span><br/>
-    Tip: <span id="tip-amount">NPR 0.00</span><br/>
-    <span id="discount-row" style="display:none;">Discount: <span id="discount-amount">NPR 0.00</span><br/></span>
-    <span style="font-size:1.1em;">Total: <span id="grand-total">NPR 0.00</span></span>
-  </div>
+  .cart-item {
+    border-bottom: 1px solid #eee;
+    padding: 16px 0;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  
+  .cart-item:last-child {
+    border-bottom: none;
+  }
 
-  <!-- Pay -->
-  <div class="cart-actions" style="margin-top: 16px;">
-    <button id="pay-btn" class="btn btn-primary" disabled>Pay with Card</button>
-  </div>
+  .cart-item-image {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: #f5f5f5;
+  }
 
-  <!-- Ensure CSRF cookie exists for fetch() POSTs -->
-  <form style="display:none">{% csrf_token %}</form>
+  .cart-item-details {
+    flex: 1;
+  }
 
-  <script>
-    // Toggle table selector with Order Method
-    document.addEventListener("change", (e)=>{
-      if (e.target && e.target.name === "order_method_inline"){
-        const v = e.target.value;
-        const wrap = document.getElementById("table-select-wrap");
-        if (wrap) wrap.style.display = (v === "DINE_IN") ? "" : "none";
+  .cart-item-name {
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .cart-item-price {
+    color: #666;
+    font-size: 14px;
+  }
+
+  .qty-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .qty-btn {
+    width: 32px;
+    height: 32px;
+    border: 1px solid #ddd;
+    background: #f8f9fa;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .qty-btn:hover {
+    background: #e9ecef;
+  }
+
+  .qty-input {
+    width: 60px;
+    text-align: center;
+    padding: 6px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+  }
+</style>
+
+<script>
+// Cart rendering for cart page
+function renderCartPage() {
+  const cartContainer = document.getElementById('cart-container');
+  const cartEmpty = document.getElementById('cart-empty');
+  const cartItems = document.getElementById('cart-items');
+  const cartItemsBody = document.getElementById('cart-items-body');
+  
+  if (!cartContainer) return;
+  
+  const snap = cart.snapshot();
+  
+  if (snap.count === 0) {
+    cartEmpty.style.display = 'block';
+    cartItems.style.display = 'none';
+    return;
+  }
+  
+  cartEmpty.style.display = 'none';
+  cartItems.style.display = 'block';
+  
+  // Render cart items
+  cartItemsBody.innerHTML = '';
+  
+  snap.items.forEach(item => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td style="padding:12px;">
+        ${item.image ? 
+          `<img src="${item.image}" alt="${item.name}" class="cart-item-image">` : 
+          '<div class="cart-item-image" style="display:flex;align-items:center;justify-content:center;color:#999;">No Image</div>'
+        }
+      </td>
+      <td style="padding:12px;">
+        <div class="cart-item-name">${item.name}</div>
+        <div class="cart-item-price">NPR ${money(item.price)} each</div>
+      </td>
+      <td style="padding:12px;">NPR ${money(item.price)}</td>
+      <td style="padding:12px;text-align:center;">
+        <div class="qty-controls">
+          <button class="qty-btn" data-sub="${item.id}">−</button>
+          <input type="number" class="qty-input" value="${item.qty}" data-qty="${item.id}" min="0">
+          <button class="qty-btn" data-add="${item.id}" data-name="${item.name}" data-price="${item.price}" data-image="${item.image || ''}">+</button>
+        </div>
+      </td>
+      <td style="padding:12px;text-align:right;font-weight:600;">NPR ${money(item.line_total)}</td>
+    `;
+    cartItemsBody.appendChild(row);
+  });
+
+  // Update totals
+  updateCartTotals();
+}
+
+function updateCartTotals() {
+  const snap = cart.snapshot();
+  
+  document.querySelectorAll('[data-cart-subtotal]').forEach(el => {
+    el.textContent = 'NPR ' + money(snap.subtotal);
+  });
+  
+  document.querySelectorAll('[data-cart-tip]').forEach(el => {
+    el.textContent = 'NPR ' + money(snap.tip);
+  });
+  
+  document.querySelectorAll('[data-cart-total]').forEach(el => {
+    el.textContent = 'NPR ' + money(snap.total);
+  });
+
+  // Show/hide discount row
+  const discountRow = document.getElementById('discount-row');
+  if (discountRow) {
+    if (snap.discount > 0) {
+      discountRow.style.display = 'flex';
+      document.querySelectorAll('[data-cart-discount]').forEach(el => {
+        el.textContent = money(snap.discount);
+      });
+    } else {
+      discountRow.style.display = 'none';
+    }
+  }
+
+  // Enable/disable checkout button
+  const checkoutBtn = document.getElementById('checkout-btn');
+  if (checkoutBtn) {
+    checkoutBtn.disabled = snap.count === 0;
+  }
+}
+
+// Tip percentage helpers
+function setTipPercent(percent) {
+  const snap = cart.snapshot();
+  const tipAmount = snap.subtotal * (percent / 100);
+  cart.setTip(tipAmount);
+  
+  const tipInput = document.getElementById('tip-input');
+  if (tipInput) {
+    tipInput.value = money(tipAmount);
+  }
+}
+
+// Apply coupon
+async function applyCoupon() {
+  const couponInput = document.getElementById('coupon-input');
+  const couponMessage = document.getElementById('coupon-message');
+  const applyBtn = document.getElementById('apply-coupon-btn');
+  
+  if (!couponInput || !couponMessage) return;
+  
+  const code = couponInput.value.trim();
+  if (!code) {
+    couponMessage.textContent = 'Please enter a coupon code';
+    couponMessage.style.color = '#dc3545';
+    return;
+  }
+
+  applyBtn.disabled = true;
+  applyBtn.textContent = 'Applying...';
+  
+  try {
+    const { res, data } = await api('/coupons/validate/', {
+      method: 'POST',
+      body: JSON.stringify({ code: code, cart_total: cart.subtotal() })
+    });
+    
+    if (res.ok && data.valid) {
+      cart.setDiscount(data.discount_amount);
+      couponMessage.textContent = `✅ ${data.message || 'Coupon applied successfully!'}`;
+      couponMessage.style.color = '#10b981';
+      couponInput.disabled = true;
+    } else {
+      couponMessage.textContent = data.message || 'Invalid coupon code';
+      couponMessage.style.color = '#dc3545';
+    }
+  } catch (error) {
+    couponMessage.textContent = 'Error applying coupon';
+    couponMessage.style.color = '#dc3545';
+  } finally {
+    applyBtn.disabled = false;
+    applyBtn.textContent = 'Apply';
+  }
+}
+
+// Initialize cart page
+document.addEventListener('DOMContentLoaded', function() {
+  // Initial render
+  renderCartPage();
+  
+  // Listen for cart changes
+  window.addEventListener('cart:change', renderCartPage);
+  
+  // Coupon application
+  const applyBtn = document.getElementById('apply-coupon-btn');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', applyCoupon);
+  }
+  
+  // Enter key on coupon input
+  const couponInput = document.getElementById('coupon-input');
+  if (couponInput) {
+    couponInput.addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        applyCoupon();
       }
     });
+  }
 
-    // Preview loyalty message
-    async function previewLoyalty(){
-      try{
-        const r = await fetch("/loyalty/preview/", {credentials:"include"});
-        if(!r.ok) return;
-        const j = await r.json();
-        const el = document.getElementById("loyalty-msg");
-        if (!el) return;
-        if (j.eligible && j.message){
-          el.textContent = j.message;
-          el.classList.remove("muted");
-        } else {
-          el.textContent = "";
-          el.classList.add("muted");
-        }
-      }catch(e){}
-    }
-    document.addEventListener("DOMContentLoaded", previewLoyalty);
-  </script>
+  // Checkout button
+  const checkoutBtn = document.getElementById('checkout-btn');
+  if (checkoutBtn) {
+    checkoutBtn.addEventListener('click', function() {
+      window.location.href = '{% url "storefront:checkout" %}';
+    });
+  }
+});
+</script>
 {% endblock %}

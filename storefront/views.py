@@ -1,204 +1,184 @@
-# FILE: storefront/views.py
 from __future__ import annotations
 
-from django.contrib.auth.mixins import LoginRequiredMixin
-from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Q
-from django.shortcuts import render, get_object_or_404
-from django.urls import reverse_lazy
-from django.views.generic import TemplateView
-from django.utils import timezone
+from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+from django.contrib.auth.decorators import login_required
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import redirect, render
+from django.utils.decorators import method_decorator
+from django.views import View
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+
+def _ctx(section: str, request: Optional[HttpRequest] = None, **extra: Any) -> Dict[str, Any]:
+    """
+    Common template context used across storefront pages.
+    """
+    user = getattr(request, "user", None)
+    return {
+        "section": section,
+        "is_auth": bool(user and user.is_authenticated),
+        "user": user,
+        # Delivery deep links (read by the frontend to open popups)
+        "UBEREATS_ORDER_URL": getattr(__import__("django.conf").conf.settings, "UBEREATS_ORDER_URL", ""),
+        "DOORDASH_ORDER_URL": getattr(__import__("django.conf").conf.settings, "DOORDASH_ORDER_URL", ""),
+        **extra,
+    }
 
 
-from decimal import Decimal
-from django.views.decorators.http import require_POST
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
+# -----------------------------------------------------------------------------
+# Page Views (names kept to match original urls.py from ZIP)
+# -----------------------------------------------------------------------------
 
-# Optional, robust imports
-try:
+def home(request: HttpRequest) -> HttpResponse:
+    return render(request, "storefront/index.html", _ctx("home", request))
+
+
+def about(request: HttpRequest) -> HttpResponse:
+    return render(request, "storefront/about.html", _ctx("about", request))
+
+
+def branches(request: HttpRequest) -> HttpResponse:
+    return render(request, "storefront/branches.html", _ctx("branches", request))
+
+
+class MenuItemsView(View):
+    """
+    Menu landing page that loads all menu items from the database.
+    """
+    template_name = "storefront/menu.html"
+
+    def get(self, request: HttpRequest) -> HttpResponse:
+        from menu.models import MenuItem, MenuCategory
+        
+        # Fetch all available menu items with their categories
+        items = MenuItem.objects.filter(is_available=True).select_related('category', 'organization').order_by('sort_order', 'name')
+        categories = MenuCategory.objects.filter(is_active=True).select_related('organization').order_by('sort_order', 'name')
+        
+        context = _ctx("menu", request)
+        context.update({
+            'items': items,
+            'categories': categories,
+            'DEFAULT_CURRENCY': 'NPR',  # Add default currency
+        })
+        
+        return render(request, self.template_name, context)
+
+
+def menu_item(request: HttpRequest, item_id: int) -> HttpResponse:
+    """
+    Menu item detail page - fetches actual item from database.
+    """
     from menu.models import MenuItem
-except Exception:  # pragma: no cover
-    MenuItem = None
-
-try:
-    from orders.models import Order
-except Exception:  # pragma: no cover
-    Order = None
-
-# Reservations models (optional)
-try:
-    from reservations.models import Reservation, Table as RMSTable
-except Exception:  # pragma: no cover
-    Reservation = None
-    RMSTable = None
-
-
-def _ctx(page: str, **extra):
-    ctx = {"page": page}
-    ctx.update(extra)
-    return ctx
+    from django.shortcuts import get_object_or_404
+    
+    try:
+        item = get_object_or_404(MenuItem, id=item_id, is_available=True)
+        context = _ctx("menu-item", request, item_id=item_id)
+        context.update({
+            'item': item,
+            'DEFAULT_CURRENCY': 'NPR',
+        })
+        return render(request, "storefront/menu_item.html", context)
+    except Exception as e:
+        # If item not found, redirect to menu
+        return redirect("storefront:menu")
 
 
-# -------------------------
-# Function-based pages (existing)
-# -------------------------
-def home(request):
-    return render(request, "storefront/index.html", _ctx("home"))
+def cart(request: HttpRequest) -> HttpResponse:
+    return render(request, "storefront/cart.html", _ctx("cart", request))
 
-def about(request):
-    return render(request, "storefront/about.html", _ctx("about"))
 
-def branches(request):
-    return render(request, "storefront/branches.html", _ctx("branches"))
-
-def menu_item(request, item_id: int):
-    if MenuItem is None:
-        return render(request, "storefront/menu_item.html", _ctx("menu_item", item=None))
-    item = get_object_or_404(MenuItem, pk=item_id)
-    return render(request, "storefront/menu_item.html", _ctx("menu_item", item=item))
-
-def cart(request):
-    # Provide active tables for Dine-in selection (from RMS Admin → Tables)
-    tables = []
-    if RMSTable:
-        try:
-            tables = RMSTable.objects.filter(is_active=True).select_related("location").order_by("location__name", "table_number")
-        except Exception:
-            tables = []
-    return render(request, "storefront/cart.html", _ctx("cart", tables=tables))
-
-def checkout(request):
-    return render(request, "storefront/checkout.html", _ctx("checkout"))
-
-def orders(request):
-    return render(request, "storefront/orders.html", _ctx("orders"))
-
-def contact(request):
-    return render(request, "storefront/contact.html", _ctx("contact"))
-
-def login_page(request):
-    return render(request, "storefront/login.html", _ctx("login"))
-
-def reservations(request):
+def checkout(request: HttpRequest) -> HttpResponse:
     """
-    Show the user's upcoming and recent reservations (if logged in).
-    If not logged in or no reservations app, show the booking UI only.
+    Checkout shell; pressing 'Pay' triggers JS → /payments/checkout/ POST.
     """
-    upcoming, recent = [], []
-    if Reservation and request.user.is_authenticated:
-        try:
-            now = timezone.now()
-            qs = Reservation.objects.all()
-            # Match by user if there is a FK; else by email field if available
-            if hasattr(Reservation, "user_id"):
-                qs = qs.filter(user=request.user)
-            elif hasattr(Reservation, "email"):
-                email = (getattr(request.user, "email", "") or "").strip()
-                if email:
-                    qs = qs.filter(email__iexact=email)
-            # Split into upcoming vs recent (past 30 days)
-            upcoming = qs.filter(start_time__gte=now).select_related("table", "table__location").order_by("start_time")[:50]
-            recent = qs.filter(start_time__lt=now, start_time__gte=now - timezone.timedelta(days=30)).select_related("table", "table__location").order_by("-start_time")[:50]
-        except Exception:
-            pass
-    return render(request, "storefront/reservations.html", _ctx("reservations", upcoming=upcoming, recent=recent))
+    return render(request, "storefront/checkout.html", _ctx("checkout", request))
 
 
-# -------------------------
-# Class-based views
-# -------------------------
-class MenuItemsView(TemplateView):
-    template_name = "storefront/menu_items.html"
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["item_id"] = int(kwargs.get("item_id") or 0)
-
-        qs = MenuItem.objects.all() if MenuItem else []
-        if MenuItem:
-            try:
-                MenuItem._meta.get_field("is_active")
-            except FieldDoesNotExist:
-                pass
-            else:
-                qs = qs.filter(is_active=True)
-
-            try:
-                MenuItem._meta.get_field("category")
-            except FieldDoesNotExist:
-                pass
-            else:
-                qs = qs.select_related("category")
-
-        order_by = ["name"]
-        try:
-            MenuItem._meta.get_field("rank")
-        except FieldDoesNotExist:
-            pass
-        else:
-            order_by = ["-rank", "name"]
-
-        qs = qs.order_by(*order_by)
-        ctx["items"] = qs
-        ctx.update(_ctx("menu"))
-        return ctx
+def orders(request: HttpRequest) -> HttpResponse:
+    """
+    Backwards-compat alias that redirects to /my-orders/ (kept from old code).
+    """
+    return redirect("storefront:my_orders")
 
 
-class MyOrdersView(LoginRequiredMixin, TemplateView):
+@method_decorator(login_required, name="dispatch")
+class MyOrdersView(View):
+    """
+    Authenticated user orders page; JS loads order history via API.
+    """
     template_name = "storefront/my_orders.html"
-    login_url = reverse_lazy("storefront:login")
 
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        if Order is None:
-            ctx["orders"] = []
-            return ctx
-
-        paid_q = Q(payment__is_paid=True) | Q(is_paid=True) | Q(status="PAID")
-        qs = (
-            Order.objects.filter(Q(created_by=self.request.user) & paid_q)
-            .select_related("payment")
-            .prefetch_related("items__menu_item")
-            .order_by("-created_at")
-        )
-        ctx["orders"] = qs
-        ctx.update(_ctx("my_orders"))
-        return ctx
+    def get(self, request: HttpRequest) -> HttpResponse:
+        return render(request, self.template_name, _ctx("orders", request))
 
 
-# -------------------------
-# Error handlers (as before)
-# -------------------------
-def http_400(request, exception=None):
-    return render(request, "errors/400.html", status=400)
+def contact(request: HttpRequest) -> HttpResponse:
+    return render(request, "storefront/contact.html", _ctx("contact", request))
 
-def http_403(request, exception=None):
-    return render(request, "errors/403.html", status=403)
 
-def http_404(request, exception=None):
-    return render(request, "errors/404.html", status=404)
+def login_page(request: HttpRequest) -> HttpResponse:
+    """
+    Renders a login/register shell (the actual auth is JSON via accounts.urls).
+    """
+    return render(request, "storefront/login.html", _ctx("login", request))
 
-def http_500(request):
-    return render(request, "errors/500.html", status=500)
-def _ctx(page, **extra):
-    # existing helper in your file; if not present, just return extra
-    data = {"page": page}
-    data.update(extra)
-    return data
 
-@require_POST
-@csrf_exempt
-def api_cart_set_tip(request):
+def reservations(request: HttpRequest) -> HttpResponse:
+    """
+    Reservation flow entry; page renders a calendar/table shell.
+    JS hits /api/reservations/... endpoints to check availability and create.
+    """
+    # Provide any soft hints you want in the UI (non-critical)
+    upcoming = request.session.get("sf_upcoming_reservations", []) or []
+    recent = request.session.get("sf_recent_reservations", []) or []
+    return render(
+        request,
+        "storefront/reservations.html",
+        _ctx("reservations", request, upcoming=upcoming, recent=recent),
+    )
+
+
+# -----------------------------------------------------------------------------
+# Small JSON endpoints used by legacy templates/JS
+# -----------------------------------------------------------------------------
+
+def api_cart_set_tip(request: HttpRequest) -> JsonResponse:
+    """
+    Kept for backward compatibility: store a fixed tip in the session so the
+    server can read it during payment if needed. New flow uses localStorage.
+    """
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
     try:
-        body = json.loads(request.body.decode() or "{}")
+        import json
+        body = json.loads(request.body.decode("utf-8"))
+        tip = float(body.get("tip") or 0)
     except Exception:
-        body = {}
-    raw = body.get("tip_amount", 0)
-    try:
-        tip = max(Decimal(str(raw)), Decimal("0.00"))
-    except Exception:
-        tip = Decimal("0.00")
-    request.session["cart_tip_amount"] = float(tip)
-    request.session.modified = True
-    return JsonResponse({"ok": True, "tip_amount": float(tip)})
+        tip = 0.0
+    request.session["sf_tip_fixed"] = max(0.0, tip)
+    return JsonResponse({"ok": True, "tip": request.session["sf_tip_fixed"]})
+
+
+# -----------------------------------------------------------------------------
+# Error handlers wired in root urls
+# -----------------------------------------------------------------------------
+
+def http_400(request: HttpRequest, exception=None) -> HttpResponse:  # pragma: no cover
+    return render(request, "storefront/errors/400.html", _ctx("error", request), status=400)
+
+
+def http_403(request: HttpRequest, exception=None) -> HttpResponse:  # pragma: no cover
+    return render(request, "storefront/errors/403.html", _ctx("error", request), status=403)
+
+
+def http_404(request: HttpRequest, exception=None) -> HttpResponse:  # pragma: no cover
+    return render(request, "storefront/errors/404.html", _ctx("error", request), status=404)
+
+
+def http_500(request: HttpRequest) -> HttpResponse:  # pragma: no cover
+    return render(request, "storefront/errors/500.html", _ctx("error", request), status=500)

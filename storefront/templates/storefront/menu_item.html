@@ -4,58 +4,97 @@
 
 {% block content %}
   <div class="container" style="max-width:960px;margin:24px auto;">
-    <a href="{% url 'storefront:menu' %}" style="text-decoration:none;">⬅ Back to Menu</a>
+    <a href="{% url 'storefront:menu' %}" style="text-decoration:none;color:#007bff;font-weight:500;">⬅ Back to Menu</a>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:16px;">
+    {% if item %}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:30px;margin-top:20px;">
       <div>
-        <div style="aspect-ratio:4/3;background:#f7f7f7;display:flex;align-items:center;justify-content:center;border-radius:12px;overflow:hidden;">
-          {% if item and item.image %}
+        <div style="aspect-ratio:4/3;background:#f7f7f7;display:flex;align-items:center;justify-content:center;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+          {% if item.image %}
             <img src="{{ item.image.url }}" alt="{{ item.name }}" style="width:100%;height:100%;object-fit:cover;">
           {% else %}
-            <img src="{% static 'storefront/img/placeholder.jpg' %}" alt="" style="width:60%;opacity:.6;">
+            <img src="{% static 'storefront/img/placeholder.svg' %}" alt="Menu Item" style="width:60%;opacity:.6;">
           {% endif %}
         </div>
       </div>
 
       <div>
-        <h1 style="margin:0 0 10px;">{% if item %}{{ item.name }}{% else %}Item{% endif %}</h1>
+        <h1 style="margin:0 0 15px;font-size:28px;color:#333;">{{ item.name }}</h1>
 
-        <div style="margin:8px 0 16px;">
-          <strong style="font-size:18px;">
-            {% if item %}
-              {{ DEFAULT_CURRENCY|default:"NPR" }} {{ item.price }}
-            {% else %}
-              {{ DEFAULT_CURRENCY|default:"NPR" }} —
-            {% endif %}
-          </strong>
+        <div style="margin:12px 0 20px;">
+          <span style="font-size:24px;font-weight:bold;color:#007bff;">
+            {{ DEFAULT_CURRENCY|default:"NPR" }} {{ item.price }}
+          </span>
         </div>
 
-        <p style="color:#555;white-space:pre-line;">
-          {% if item and item.description %}
-            {{ item.description }}
-          {% else %}
-            No description available.
-          {% endif %}
-        </p>
+        <div style="margin-bottom:20px;">
+          <h3 style="font-size:16px;margin-bottom:8px;color:#666;">Description</h3>
+          <p style="color:#555;line-height:1.6;margin:0;">
+            {% if item.description %}
+              {{ item.description }}
+            {% else %}
+              No description available for this item.
+            {% endif %}
+          </p>
+        </div>
 
-        {% if item %}
-          <div style="margin-top:16px;display:flex;gap:10px;">
-            <button
-              type="button"
-              class="btn btn-primary add-to-cart"
-              data-id="{{ item.id }}"
-              data-name="{{ item.name|escape }}"
-              data-price="{{ item.price }}"
-              data-image="{% if item.image %}{{ item.image.url }}{% endif %}"
-            >Add to Cart</button>
-            <a href="{% url 'storefront:cart' %}" class="btn btn-secondary">Go to Cart</a>
-          </div>
+        <div style="margin-bottom:20px;">
+          <h3 style="font-size:16px;margin-bottom:8px;color:#666;">Category</h3>
+          <span style="background:#f8f9fa;padding:4px 12px;border-radius:20px;color:#666;font-size:14px;">
+            {{ item.category.name }}
+          </span>
+        </div>
+
+        {% if item.is_vegetarian %}
+        <div style="margin-bottom:20px;">
+          <span style="background:#10b981;color:white;padding:4px 12px;border-radius:20px;font-size:14px;">
+            🌱 Vegetarian
+          </span>
+        </div>
         {% endif %}
+
+        <div style="margin-top:24px;display:flex;gap:12px;">
+          <button
+            type="button"
+            class="btn btn-primary add-to-cart"
+            data-add="{{ item.id }}"
+            data-name="{{ item.name|escape }}"
+            data-price="{{ item.price }}"
+            data-image="{% if item.image %}{{ item.image.url }}{% endif %}"
+            style="background:#007bff;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:16px;font-weight:500;cursor:pointer;transition:all 0.2s;"
+          >
+            Add to Cart
+          </button>
+          <a href="{% url 'storefront:cart' %}" 
+             class="btn btn-secondary" 
+             style="background:#f8f9fa;color:#333;border:1px solid #ddd;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:500;transition:all 0.2s;">
+            View Cart
+          </a>
+        </div>
       </div>
     </div>
+    {% else %}
+    <div style="text-align:center;margin-top:60px;">
+      <h2>Menu Item Not Found</h2>
+      <p>The item you're looking for is not available.</p>
+      <a href="{% url 'storefront:menu' %}" style="color:#007bff;">← Back to Menu</a>
+    </div>
+    {% endif %}
   </div>
 
-  <script>window.DEFAULT_CURRENCY="{{ DEFAULT_CURRENCY|default:'NPR' }}";</script>
-  <!-- IMPORTANT: this path matches the moved file -->
-  <script src="{% static 'storefront/app.js' %}" defer></script>
+  <style>
+    .btn-primary:hover {
+      background: #0056b3 !important;
+      transform: translateY(-1px);
+    }
+    
+    .btn-secondary:hover {
+      background: #e9ecef !important;
+      transform: translateY(-1px);
+    }
+  </style>
+
+  <script>
+    window.DEFAULT_CURRENCY = "{{ DEFAULT_CURRENCY|default:'NPR' }}";
+  </script>
 {% endblock %}

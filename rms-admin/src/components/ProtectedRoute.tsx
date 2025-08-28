@@ -1,11 +1,16 @@
-import { Navigate, Outlet, useLocation } from 'react-router-dom'
+import { Redirect, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { ReactNode } from 'react'
 
-export default function ProtectedRoute() {
+interface ProtectedRouteProps {
+  children: ReactNode
+}
+
+export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 const { isAuthenticated } = useAuth()
 const location = useLocation()
 if (!isAuthenticated) {
-return <Navigate to="/login" replace state={{ from: location }} />
+return <Redirect to={{ pathname: '/login', state: { from: location } }} />
 }
-return <Outlet />
+return <>{children}</>
 }

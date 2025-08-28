@@ -1,4 +1,4 @@
-/* storefront/static/storefront/auth-modal.js */
+/* storefront/static/storefront/auth-modal.js - Fixed Session Auth */
 (function () {
   const $ = (sel, el=document) => el.querySelector(sel);
   const modal = $("#auth-modal");
@@ -15,62 +15,160 @@
   const loginStatus = $("#modal-login-status");
   const signupStatus = $("#modal-signup-status");
 
-  function show(which){ stepChoice.classList.toggle("hidden", which!=="choice"); stepLogin.classList.toggle("hidden", which!=="login"); stepSignup.classList.toggle("hidden", which!=="signup"); }
-  function openModal(which="login"){ modal.classList.remove("hidden"); show(which); }
-  function closeModal(){ modal.classList.add("hidden"); }
+  function show(which){ 
+    stepChoice.classList.toggle("hidden", which!=="choice"); 
+    stepLogin.classList.toggle("hidden", which!=="login"); 
+    stepSignup.classList.toggle("hidden", which!=="signup"); 
+  }
+  
+  function openModal(which="choice"){ 
+    modal.classList.remove("hidden"); 
+    show(which); 
+  }
+  
+  function closeModal(){ 
+    modal.classList.add("hidden"); 
+    // Clear any status messages
+    if (loginStatus) loginStatus.textContent = "";
+    if (signupStatus) signupStatus.textContent = "";
+  }
 
-  btnOpenLogin?.addEventListener("click", () => openModal("login"));
-  btnOpenSignup?.addEventListener("click", () => openModal("signup"));
+  // Event listeners
+  btnOpenLogin?.addEventListener("click", () => show("login"));
+  btnOpenSignup?.addEventListener("click", () => show("signup"));
   linkToLogin?.addEventListener("click", (e) => { e.preventDefault(); show("login"); });
   linkToSignup?.addEventListener("click", (e) => { e.preventDefault(); show("signup"); });
   btnClose?.addEventListener("click", closeModal);
-  $("#auth-link")?.addEventListener("click", (e) => { e.preventDefault(); openModal("login"); });
 
-  function setBusy(el, busy){ if(!el) return; el.disabled = !!busy; el.classList.toggle("is-busy", !!busy); }
+  function setBusy(el, busy){ 
+    if(!el) return; 
+    el.disabled = !!busy; 
+    el.classList.toggle("is-busy", !!busy); 
+  }
 
-  async function jwtLogin(username, password){
-    const res = await fetch("/accounts/auth/login/", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify({ username, password }) });
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(";").shift();
+    return "";
+  }
+
+  // Session-based login (no JWT)
+  async function sessionLogin(username, password){
+    const csrftoken = getCookie('csrftoken');
+    const res = await fetch("/accounts/login/", { 
+      method: "POST", 
+      headers: { 
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrftoken
+      }, 
+      credentials: "include", 
+      body: JSON.stringify({ username, password }) 
+    });
+    
     const data = await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.detail || "Login failed");
-    if (window.auth && typeof window.auth.set === "function") window.auth.set(data.access, data.refresh);
-    else { localStorage.setItem("jwt_access", data.access||""); localStorage.setItem("jwt_refresh", data.refresh||""); }
+    
+    return data;
   }
 
-  async function createSessionAndMerge(){
-    const tok = localStorage.getItem("jwt_access") || "";
-    if(!tok) return;
-    await fetch("/accounts/auth/session/", { method:"POST", headers:{ "Authorization":"Bearer "+tok }, credentials:"include" });
-    await fetch("/api/orders/cart/merge/", { method:"POST", credentials:"include" });
+  // Session-based registration
+  async function sessionRegister(userData){
+    const csrftoken = getCookie('csrftoken');
+    const res = await fetch("/accounts/register/", { 
+      method: "POST", 
+      headers: { 
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrftoken
+      }, 
+      credentials: "include", 
+      body: JSON.stringify(userData) 
+    });
+    
+    const data = await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.detail || data.username || data.email || "Registration failed");
+    
+    return data;
   }
 
-  async function afterAuthContinueCheckout(){
-    if (typeof window.__continueCheckoutAfterAuth === "function") await window.__continueCheckoutAfterAuth();
+  // Update navigation after successful auth
+  function updateNavAfterAuth() {
+    const navLogin = document.getElementById('nav-login');
+    const navLogout = document.getElementById('nav-logout');
+    const navOrders = document.getElementById('nav-orders');
+    
+    if (navLogin) navLogin.style.display = 'none';
+    if (navLogout) navLogout.style.display = '';
+    if (navOrders) navOrders.style.display = '';
+    
+    // Fire auth event for other parts of the app
+    window.dispatchEvent(new CustomEvent('auth:login'));
   }
 
+  // Login form handler
   loginForm?.addEventListener("submit", async (e) => {
-    e.preventDefault(); loginStatus.textContent="Logging in…";
+    e.preventDefault(); 
+    loginStatus.textContent = "Logging in…";
     setBusy(loginForm.querySelector("button[type=submit]"), true);
+    
     const f = new FormData(loginForm);
-    try { await jwtLogin(f.get("username"), f.get("password")); await createSessionAndMerge(); loginStatus.textContent="Success!"; modal.classList.add("hidden"); await afterAuthContinueCheckout(); }
-    catch (err) { loginStatus.textContent = (err && err.message) || "Login failed."; }
-    finally { setBusy(loginForm.querySelector("button[type=submit]"), false); }
+    try { 
+      await sessionLogin(f.get("username"), f.get("password")); 
+      loginStatus.textContent = "Success!"; 
+      updateNavAfterAuth();
+      closeModal();
+      
+      // Continue with checkout if needed
+      if (typeof window.__continueCheckoutAfterAuth === "function") {
+        await window.__continueCheckoutAfterAuth();
+      }
+    } catch (err) { 
+      loginStatus.textContent = (err && err.message) || "Login failed."; 
+    } finally { 
+      setBusy(loginForm.querySelector("button[type=submit]"), false); 
+    }
   });
 
+  // Signup form handler
   signupForm?.addEventListener("submit", async (e) => {
-    e.preventDefault(); signupStatus.textContent="Creating account…";
+    e.preventDefault(); 
+    signupStatus.textContent = "Creating account…";
     setBusy(signupForm.querySelector("button[type=submit]"), true);
+    
     const f = new FormData(signupForm);
-    const payload = { username:f.get("username"), email:f.get("email"), first_name:f.get("first_name")||"", last_name:f.get("last_name")||"", password:f.get("password") };
+    const payload = { 
+      username: f.get("username"), 
+      email: f.get("email"), 
+      first_name: f.get("first_name") || "", 
+      last_name: f.get("last_name") || "", 
+      password: f.get("password") 
+    };
+    
     try {
-      const r = await fetch("/accounts/auth/register/", { method:"POST", headers:{ "Content-Type":"application/json" }, credentials:"include", body: JSON.stringify(payload) });
-      const d = await r.json().catch(()=>({}));
-      if(!r.ok) throw new Error(d.detail || d.username || d.email || "Signup failed");
-      await jwtLogin(payload.username, payload.password); await createSessionAndMerge();
-      signupStatus.textContent="Account created!"; modal.classList.add("hidden"); await afterAuthContinueCheckout();
-    } catch (err) { signupStatus.textContent = (err && err.message) || "Signup failed."; }
-    finally { setBusy(signupForm.querySelector("button[type=submit]"), false); }
+      await sessionRegister(payload);
+      // Auto-login after successful registration
+      await sessionLogin(payload.username, payload.password);
+      signupStatus.textContent = "Account created!"; 
+      updateNavAfterAuth();
+      closeModal();
+      
+      // Continue with checkout if needed
+      if (typeof window.__continueCheckoutAfterAuth === "function") {
+        await window.__continueCheckoutAfterAuth();
+      }
+    } catch (err) { 
+      signupStatus.textContent = (err && err.message) || "Registration failed."; 
+    } finally { 
+      setBusy(signupForm.querySelector("button[type=submit]"), false); 
+    }
   });
 
-  document.addEventListener("keydown", (e)=>{ if(e.key==="Escape") modal.classList.add("hidden"); });
-  window.__openAuthModalForPay = () => openModal("login");
+  // Close modal on Escape key
+  document.addEventListener("keydown", (e) => { 
+    if(e.key === "Escape") closeModal(); 
+  });
+  
+  // Make openModal available globally
+  window.__openAuthModalForPay = () => openModal("choice");
+  window.__openAuthModal = openModal;
 })();

@@ -1,81 +1,54 @@
 from __future__ import annotations
 
-from decimal import Decimal
+from django.contrib.auth import get_user_model
 from django.db import models
-from django.utils import timezone
+
+User = get_user_model()
 
 
-class TipLoyaltySetting(models.Model):
+class LoyaltyRank(models.Model):
     """
-    Single-row configuration for tip-based loyalty.
+    Admin-configurable loyalty ranks with a FIXED TIP in integer cents.
 
-    Fields:
-        active: toggle ON/OFF the loyalty discount logic
-        threshold_tip_total: when a user's cumulative *tip* reaches this amount,
-                             they qualify for the discount (fixed amount)
-        discount_amount: fixed currency amount to deduct (not a percent)
-        message_template: message shown to the user when discount applies
-        updated_at: auto timestamp of last modification
-
-    We expose a convenience classmethod get_solo() to read or create the single row.
+    Examples:
+      code = "bronze", name = "Bronze", tip_cents = 0
+      code = "silver", name = "Silver", tip_cents = 500    # $5.00 (or 500¢ in your set currency)
+      code = "gold",   name = "Gold",   tip_cents = 1000   # $10.00
     """
-
-    active = models.BooleanField(default=True)
-    threshold_tip_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
-    message_template = models.TextField(
-        blank=True,
-        default="You are our loyal customer and you get a discount!",
-        help_text="Template shown when the loyalty discount applies.",
-    )
-    updated_at = models.DateTimeField(auto_now=True)
+    code = models.SlugField(max_length=32, unique=True)
+    name = models.CharField(max_length=64)
+    tip_cents = models.PositiveIntegerField(default=0, help_text="Fixed tip (integer cents) to suggest for this rank.")
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
-        app_label = "loyality"
-        verbose_name = "Tip Loyalty Setting"
-        verbose_name_plural = "Tip Loyalty Settings"
+        ordering = ["sort_order", "name"]
 
-    def __str__(self) -> str:  # pragma: no cover
-        return f"LoyaltySettings(active={self.active}, threshold={self.threshold_tip_total}, discount={self.discount_amount})"
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return f"{self.name} ({self.tip_cents}¢)"
 
-    # ---- Singleton helper -------------------------------------------------
-    @classmethod
-    def get_solo(cls) -> "TipLoyaltySetting":
-        """
-        Ensure we always have a single row. Returns that row.
-        """
-        obj, _ = cls.objects.get_or_create(pk=1, defaults={
-            "active": True,
-            "threshold_tip_total": Decimal("0.00"),
-            "discount_amount": Decimal("0.00"),
-        })
-        return obj
 
-    # ---- Safe accessors ---------------------------------------------------
+class LoyaltyProfile(models.Model):
+    """
+    Per-user loyalty profile that assigns a rank.
+    If a user has a rank with a non-zero tip_cents, that value is treated as the
+    DEFAULT suggested tip for checkout — but the CUSTOMER’S chosen tip always wins.
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="loyalty_profile")
+    rank = models.ForeignKey(
+        LoyaltyRank, on_delete=models.SET_NULL, null=True, blank=True, related_name="members"
+    )
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        verbose_name = "Loyalty Profile"
+        verbose_name_plural = "Loyalty Profiles"
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return f"{self.user_id} → {self.rank.name if self.rank else 'No Rank'}"
+
     @property
-    def is_active(self) -> bool:
-        return bool(self.active)
-
-    def qualifies(self, total_tip_for_user: Decimal) -> bool:
-        """
-        Returns True if the user's accumulated TIP total meets the threshold.
-        """
-        try:
-            total_tip_for_user = Decimal(total_tip_for_user or 0)
-        except Exception:
-            total_tip_for_user = Decimal("0.00")
-        return self.active and total_tip_for_user >= (self.threshold_tip_total or Decimal("0.00"))
-
-    def discount_value(self) -> Decimal:
-        """
-        Fixed currency amount (>= 0).
-        """
-        try:
-            amt = Decimal(self.discount_amount or 0)
-        except Exception:
-            amt = Decimal("0.00")
-        return max(Decimal("0.00"), amt)
-
-    def updated(self):
-        self.updated_at = timezone.now()
-        self.save(update_fields=["updated_at"])
+    def tip_cents(self) -> int:
+        if self.rank and self.rank.is_active:
+            return int(self.rank.tip_cents or 0)
+        return 0

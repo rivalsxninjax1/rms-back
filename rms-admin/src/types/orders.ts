@@ -1,4 +1,4 @@
-import type { UUID, ID } from './common'
+import type { ID } from './common'
 
 export type ServiceType = 'DINE_IN' | 'TAKEAWAY' | 'DELIVERY'
 

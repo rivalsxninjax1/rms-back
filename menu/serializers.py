@@ -1,8 +1,14 @@
 # menu/serializers.py
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Any, Optional
+
 from rest_framework import serializers
 
-def _abs_url(request, url: str | None) -> str | None:
-    """Return an absolute URL if a request is available."""
+
+def _abs_url(request, url: Optional[str]) -> Optional[str]:
+    """Return an absolute URL if a request is available; otherwise the raw URL."""
     if not url:
         return None
     if request is None:
@@ -15,14 +21,19 @@ def _abs_url(request, url: str | None) -> str | None:
 
 class MenuItemSerializer(serializers.Serializer):
     """
-    Robust serializer that doesn't assume model field names.
-    It exposes:
-      - id
-      - name
-      - description
-      - price
-      - image (absolute URL if possible)
-      - category: {id, name}
+    Minimal, stable shape used by storefront JS:
+
+      {
+        "id": 1,
+        "name": "Veg Momo",
+        "description": "Delicious…",
+        "price": "199.00",        # numeric-friendly string
+        "image": "https://…/media/menu_items/veg.jpg",
+        "category": {"id": 2, "name": "Momos"},
+        "is_vegetarian": true,
+        "is_available": true,
+        "preparation_time": 15
+      }
     """
     id = serializers.IntegerField()
     name = serializers.SerializerMethodField()
@@ -30,41 +41,65 @@ class MenuItemSerializer(serializers.Serializer):
     price = serializers.SerializerMethodField()
     image = serializers.SerializerMethodField()
     category = serializers.SerializerMethodField()
+    is_vegetarian = serializers.SerializerMethodField()
+    is_available = serializers.SerializerMethodField()
+    preparation_time = serializers.SerializerMethodField()
 
-    def get_name(self, obj):
+    # ---------------- name / description / price ----------------
+
+    def get_name(self, obj: Any) -> str:
         for f in ("name", "title"):
             if hasattr(obj, f) and getattr(obj, f):
-                return getattr(obj, f)
-        return f"Item {getattr(obj, 'id', '')}"
+                return str(getattr(obj, f))
+        return "Item"
 
-    def get_description(self, obj):
+    def get_description(self, obj: Any) -> str:
         for f in ("description", "details", "summary"):
-            if hasattr(obj, f):
-                return getattr(obj, f) or ""
+            if hasattr(obj, f) and getattr(obj, f):
+                return str(getattr(obj, f))
         return ""
 
-    def get_price(self, obj):
-        for f in ("price", "unit_price", "selling_price", "amount"):
+    def get_price(self, obj: Any) -> str:
+        """
+        Return a Decimal-like value rendered as a numeric-friendly string.
+        The storefront uses Number(item.price) so strings like "12.00" are fine.
+        """
+        for f in ("price", "unit_price", "amount"):
             if hasattr(obj, f):
-                v = getattr(obj, f)
-                return v if v is not None else 0
-        return 0
-
-    def get_image(self, obj):
-        """
-        Return absolute URL for image if request is in serializer context.
-        Looks for common image field names.
-        """
-        request = self.context.get("request")
-        for f in ("image", "photo", "thumbnail"):
-            if hasattr(obj, f) and getattr(obj, f):
+                val = getattr(obj, f)
+                # Normalize to Decimal, then to 2dp string
                 try:
-                    return _abs_url(request, getattr(obj, f).url)
+                    dec = Decimal(str(val))
+                    return f"{dec:.2f}"
                 except Exception:
-                    return _abs_url(request, str(getattr(obj, f)))
+                    pass
+        return "0.00"
+
+    # ---------------- image (absolute URL) ----------------
+
+    def get_image(self, obj: Any) -> Optional[str]:
+        request = self.context.get("request") if isinstance(self.context, dict) else None
+        # Try common image-like fields
+        for f in ("image", "photo", "picture", "thumbnail"):
+            if hasattr(obj, f):
+                val = getattr(obj, f)
+                # File/ImageField or plain string path
+                path = None
+                try:
+                    if val:
+                        if hasattr(val, "url"):
+                            path = val.url
+                        else:
+                            path = str(val)
+                except Exception:
+                    path = None
+                if path:
+                    return _abs_url(request, path)
         return None
 
-    def get_category(self, obj):
+    # ---------------- category ----------------
+
+    def get_category(self, obj: Any) -> Optional[dict]:
         """
         Return minimal category info without assuming exact field names.
         """
@@ -74,3 +109,17 @@ class MenuItemSerializer(serializers.Serializer):
                 name = getattr(c, "name", None) or getattr(c, "title", None)
                 return {"id": getattr(c, "id", None), "name": name}
         return None
+
+    # ---------------- flags / prep time ----------------
+
+    def get_is_vegetarian(self, obj: Any) -> bool:
+        return bool(getattr(obj, "is_vegetarian", False))
+
+    def get_is_available(self, obj: Any) -> bool:
+        return bool(getattr(obj, "is_available", True))
+
+    def get_preparation_time(self, obj: Any) -> int:
+        try:
+            return int(getattr(obj, "preparation_time", 15) or 15)
+        except Exception:
+            return 15

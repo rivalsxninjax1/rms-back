@@ -1,16 +1,29 @@
-from rest_framework import viewsets
-from django_filters.rest_framework import DjangoFilterBackend
+from __future__ import annotations
+
+from rest_framework import mixins, viewsets
+from rest_framework.permissions import IsAdminUser
+
 from .models import DailySales, ShiftReport
 from .serializers import DailySalesSerializer, ShiftReportSerializer
 
-class DailySalesViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = DailySales.objects.select_related('location').all()
-    serializer_class = DailySalesSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['location', 'date']
 
-class ShiftReportViewSet(viewsets.ModelViewSet):
-    queryset = ShiftReport.objects.select_related('location', 'user').all()
+class DailySalesViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """
+    Read-only API for daily sales aggregates (admin-only).
+    """
+    queryset = DailySales.objects.all()
+    serializer_class = DailySalesSerializer
+    permission_classes = [IsAdminUser]
+    filterset_fields = ["date"]
+    ordering = ["-date", "-id"]
+
+
+class ShiftReportViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """
+    Read-only API for shift reports (admin-only).
+    """
+    queryset = ShiftReport.objects.all()
     serializer_class = ShiftReportSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['location', 'user', 'is_closed']
+    permission_classes = [IsAdminUser]
+    filterset_fields = ["date", "shift"]
+    ordering = ["-date", "shift", "-id"]

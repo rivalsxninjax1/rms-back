@@ -1,4 +1,4 @@
-import type { ID, UUID } from './common'
+import type { ID } from './common'
 
 export interface MenuCategory {
 id: ID

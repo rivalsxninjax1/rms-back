@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useHistory } from 'react-router-dom'
 import api from '../lib/api'
 import { useAuthStore } from '../lib/auth'
 import type { TokenPair } from '../types/auth'
@@ -11,7 +11,7 @@ const [loading, setLoading] = useState(false)
 const [error, setError] = useState<string | null>(null)
 
 const setTokens = useAuthStore((s) => s.setTokens)
-const navigate = useNavigate()
+const history = useHistory()
 const location = useLocation() as any
 
 async function onSubmit(e: FormEvent) {
@@ -25,7 +25,7 @@ password,
 })
 setTokens(data)
 const to = location.state?.from?.pathname || '/'
-navigate(to, { replace: true })
+history.replace(to)
 } catch (err: any) {
 setError(err?.response?.data?.detail ?? 'Login failed')
 } finally {

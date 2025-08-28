@@ -5,18 +5,35 @@ from django.views.decorators.http import require_GET, require_POST
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404
+from django.views.decorators.csrf import csrf_protect
 
 from .services import find_active_coupon, compute_discount_for_order
 from orders.models import Order
 
 
-@require_GET
+@require_POST
+@csrf_protect  
 def validate_coupon(request):
-    code = (request.GET.get("code") or "").strip()
+    """
+    Validate coupon for cart - works for both logged in and guest users
+    """
+    try:
+        data = json.loads(request.body or "{}")
+        code = (data.get("code") or "").strip()
+        cart_total = float(data.get("cart_total") or 0)
+    except Exception:
+        return JsonResponse({"valid": False, "message": "Invalid request"}, status=400)
+    
     c = find_active_coupon(code)
-    if c:
-        return JsonResponse({"valid": True, "percent": int(c.percent), "message": f"{c.percent}% discount"})
-    return JsonResponse({"valid": False, "message": "Invalid coupon"}, status=404)
+    if c and c.is_valid_now():
+        discount_amount = cart_total * (c.percent / 100.0)
+        return JsonResponse({
+            "valid": True, 
+            "percent": int(c.percent),
+            "discount_amount": discount_amount,
+            "message": f"{c.percent}% discount applied! Save NPR {discount_amount:.2f}"
+        })
+    return JsonResponse({"valid": False, "message": "Invalid or expired coupon"}, status=400)
 
 
 @require_POST

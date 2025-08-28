@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import csv
-import re
-from typing import Dict, Optional
+from typing import Dict, Optional, Type
 
 from django.contrib import admin
+from django.db import models
 from django.http import HttpResponse
-from django.utils.html import format_html
 from django.urls import reverse
+from django.utils.html import format_html
 
 from .models import Order, OrderItem
 
-# Optional Payment inline
+# Optional Payment inline (only if a payments.Payment model exists and FK->orders.Order)
 try:
     from payments.models import Payment  # type: ignore
 except Exception:
@@ -24,27 +24,64 @@ except Exception:
     RMSTable = None
 
 
+# ---------------------------------------------------------------------------
+# Safe registration helper (for optional models)
+# ---------------------------------------------------------------------------
+
+def _is_model(klass: object) -> bool:
+    try:
+        return isinstance(klass, type) and issubclass(klass, models.Model)
+    except Exception:
+        return False
+
+
+def _safe_register(model_cls: Optional[Type[models.Model]], admin_cls: Optional[Type[admin.ModelAdmin]] = None) -> None:
+    if not _is_model(model_cls):
+        return
+    try:
+        if hasattr(admin.site, "is_registered") and admin.site.is_registered(model_cls):  # type: ignore[attr-defined]
+            return
+    except Exception:
+        pass
+    try:
+        if admin_cls is None:
+            class _AutoAdmin(admin.ModelAdmin):
+                list_display = ("id",)
+            admin.site.register(model_cls, _AutoAdmin)
+        else:
+            admin.site.register(model_cls, admin_cls)
+    except admin.sites.AlreadyRegistered:
+        return
+
+
+# ---------------------------------------------------------------------------
+# Order inlines and admin
+# ---------------------------------------------------------------------------
+
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
     raw_id_fields = ("menu_item",)
 
 
-if Payment:
+# Register Payment inline only if it truly has FK to orders.Order named "order"
+if Payment and any(getattr(f, "attname", "") == "order_id" for f in Payment._meta.get_fields()):  # type: ignore[attr-defined]
     class PaymentInline(admin.StackedInline):
         model = Payment
         extra = 0
         can_delete = False
         fk_name = "order"
-        fields = (
-            "provider",
-            "amount",
-            "currency",
-            "is_paid",
-            "stripe_session_id",
-            "stripe_payment_intent",
-            "created_at",
-            "updated_at",
+        fields = tuple(
+            f for f in (
+                "provider",
+                "amount",
+                "currency",
+                "is_paid",
+                "stripe_session_id",
+                "stripe_payment_intent",
+                "created_at",
+                "updated_at",
+            ) if hasattr(Payment, f)
         )
         readonly_fields = fields
 else:
@@ -53,40 +90,45 @@ else:
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
+    """
+    Admin aligned to the actual fields present in orders.models.Order
+    (per your ZIP): user, status, notes, tip_amount, discount_amount,
+    currency, delivery_option, dine_in_table, invoice_pdf, created_at, updated_at.
+    """
     list_display = (
         "id",
-        "created_by",
-        "source",
-        "table_number",
-        "table_ref",        # NEW: link to RMS Table if available (TBL:<id>)
+        "user",
+        "delivery_option",
+        "dine_in_table",   # FK field exists; also present table_ref() for a friendly link
+        "table_ref",
         "status",
-        "is_paid",
-        "subtotal",
+        "items_subtotal_admin",
         "tip_amount",
         "discount_amount",
-        "discount_code",
+        "grand_total_admin",
+        "currency",
         "created_at",
         "invoice_link",
     )
-    list_filter = ("status", "source", "is_paid", "created_at")
+    list_filter = ("status", "delivery_option", "created_at")
     date_hierarchy = "created_at"
     inlines = [x for x in (OrderItemInline, PaymentInline) if x]
-    search_fields = ("=id", "created_by__username", "discount_code", "external_order_id")
-    raw_id_fields = ("created_by",)
+    search_fields = ("=id", "user__username")
+    raw_id_fields = ("user",)
     ordering = ("-created_at",)
-    readonly_fields = ("invoice_pdf",)
+    readonly_fields = tuple(f for f in ("invoice_pdf",) if hasattr(Order, "invoice_pdf"))
 
-    # ---- Performance: avoid N+1 (payment + items -> menu_item)
+    # Avoid N+1 (items + menu_item + user + dine_in_table)
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         try:
-            qs = qs.select_related("payment", "created_by")
+            qs = qs.select_related("user", "dine_in_table")
             qs = qs.prefetch_related("items__menu_item")
         except Exception:
             pass
         return qs
 
-    # ---- Clickable invoice link (unchanged)
+    # Friendly invoice link if file present
     def invoice_link(self, obj: Order) -> str:
         invoice = getattr(obj, "invoice_pdf", None)
         if invoice:
@@ -97,104 +139,101 @@ class OrderAdmin(admin.ModelAdmin):
         return "-"
     invoice_link.short_description = "Invoice"
 
-    # ---- NEW: RMS Table link/label if external_order_id == "TBL:<id>"
+    # Table link to reservations.Table admin if FK exists
     def table_ref(self, obj: Order) -> str:
         """
-        If the order was aligned to an RMS Table, we store external_order_id="TBL:<id>".
-        This renders a link to that Table's admin change page, with a human-friendly label:
-        "<Location Name> — Table <number>" when available; else "Table <number>".
+        Render a friendly link to the dine-in table admin page if set.
         """
-        ext = (getattr(obj, "external_order_id", "") or "").strip()
-        m = re.match(r"^TBL:(\d+)$", ext or "")
-        if not m:
+        tbl = getattr(obj, "dine_in_table", None)
+        if not tbl:
             return "-"
-        if RMSTable is None:
-            return f"TBL:{m.group(1)}"
-        try:
-            table_id = int(m.group(1))
-        except Exception:
-            return f"TBL:{ext}"
-        try:
-            tbl = RMSTable.objects.select_related("location").filter(id=table_id).first()
-            if not tbl:
-                return f"TBL:{table_id}"
-            loc_name = getattr(tbl.location, "name", getattr(tbl.location, "title", "")) if getattr(tbl, "location", None) else ""
-            label = f"{loc_name} — Table {getattr(tbl, 'table_number', '')}".strip(" —")
+        label = f"Table {getattr(tbl, 'table_number', '')}".strip() or f"Table #{getattr(tbl, 'id', '')}"
+        if RMSTable:
             try:
                 url = reverse("admin:reservations_table_change", args=[tbl.id])
-                return format_html('<a href="{}">{}</a>', url, label or f"TBL:{table_id}")
+                return format_html('<a href="{}">{}</a>', url, label)
             except Exception:
-                return label or f"TBL:{table_id}"
-        except Exception:
-            return f"TBL:{table_id}"
+                return label
+        return label
     table_ref.short_description = "RMS Table"
 
-    # ---- CSV Export (kept; now also resolves RMS Table label when possible)
+    # Admin-friendly numeric columns
+    def items_subtotal_admin(self, obj: Order):
+        return obj.items_subtotal()
+    items_subtotal_admin.short_description = "Subtotal"
+
+    def grand_total_admin(self, obj: Order):
+        return obj.grand_total()
+    grand_total_admin.short_description = "Grand Total"
+
+    # ---- CSV Export (aligned to your model)
     actions = ["export_sales_csv"]
 
-    def _build_table_labels(self, table_ids) -> Dict[int, str]:
-        """
-        Batch-fetch labels for table ids -> "Location — Table X"
-        Only used inside export to avoid N+1 queries.
-        """
-        if not RMSTable or not table_ids:
-            return {}
-        labels: Dict[int, str] = {}
-        try:
-            for tbl in RMSTable.objects.select_related("location").filter(id__in=table_ids):
-                loc = getattr(tbl.location, "name", getattr(tbl.location, "title", "")) if getattr(tbl, "location", None) else ""
-                lbl = f"{loc} — Table {getattr(tbl, 'table_number', '')}".strip(" —")
-                labels[tbl.id] = lbl or f"Table {getattr(tbl, 'table_number', '')}"
-        except Exception:
-            # Best-effort; return what we have
-            pass
-        return labels
-
     def export_sales_csv(self, request, queryset):
-        # Pre-resolve any external_order_id "TBL:<id>" -> admin label
-        table_ids = []
-        id_map: Dict[int, int] = {}  # order_id -> table_id
-        for o in queryset:
-            try:
-                ext = (getattr(o, "external_order_id", "") or "").strip()
-                m = re.match(r"^TBL:(\d+)$", ext)
-                if m:
-                    tid = int(m.group(1))
-                    id_map[o.id] = tid
-                    table_ids.append(tid)
-            except Exception:
-                continue
-        labels = self._build_table_labels(table_ids)
-
         response = HttpResponse(content_type="text/csv")
         response["Content-Disposition"] = 'attachment; filename="sales.csv"'
         writer = csv.writer(response)
         writer.writerow([
-            "Order ID", "Created At", "User", "Source",
-            "Table", "RMS Table",        # <-- added RMS Table label
-            "Status", "Paid", "Subtotal", "Tip", "Discount",
+            "Order ID", "Created At", "User",
+            "Delivery", "Table",
+            "Status",
+            "Subtotal", "Tip", "Discount",
             "Final Total", "Currency"
         ])
         for o in queryset:
-            rms_label: Optional[str] = None
-            tid = id_map.get(o.id)
-            if tid:
-                rms_label = labels.get(tid) or f"TBL:{tid}"
-
             writer.writerow([
                 o.id,
                 o.created_at,
-                getattr(o.created_by, "username", "") if getattr(o, "created_by_id", None) else "",
-                getattr(o, "source", ""),
-                getattr(o, "table_number", "") or "",
-                rms_label or "",  # NEW column
+                getattr(o.user, "username", "") if getattr(o, "user_id", None) else "",
+                getattr(o, "delivery_option", ""),
+                (f"Table {getattr(o.dine_in_table, 'table_number', '')}" if getattr(o, "dine_in_table_id", None) else ""),
                 getattr(o, "status", ""),
-                "YES" if getattr(o, "is_paid", False) else "NO",
-                str(getattr(o, "subtotal", "")),
-                str(getattr(o, "tip_amount", "")),
-                str(getattr(o, "discount_amount", "")),
+                str(o.items_subtotal()),
+                str(o.tip_amount),
+                str(o.discount_amount),
                 str(o.grand_total()),
                 (getattr(o, "currency", "USD") or "USD").upper(),
             ])
         return response
     export_sales_csv.short_description = "Export Sales (CSV)"
+
+
+# ---------------------------------------------------------------------------
+# Optional: TipTier/DiscountRule admin (robust imports; no crashes if missing)
+# ---------------------------------------------------------------------------
+
+TipTier = None
+try:
+    from .models import TipTier as _TipTier  # defined in this app
+    TipTier = _TipTier
+except Exception:
+    TipTier = None
+
+class TipTierAdmin(admin.ModelAdmin):
+    # Reflect the actual fields of your TipTier in orders.models:
+    # rank, default_tip_amount
+    list_display = tuple(
+        col for col in ("id", "rank", "default_tip_amount")
+        if hasattr(TipTier, col)  # type: ignore
+    ) or ("id",)
+    search_fields = tuple(col for col in ("rank",) if hasattr(TipTier, col))  # type: ignore
+    ordering = tuple(col for col in ("rank", "id") if hasattr(TipTier, col))  # type: ignore
+
+_safe_register(TipTier, TipTierAdmin)
+
+DiscountRule = None
+try:
+    from .models import DiscountRule as _DiscountRule
+    DiscountRule = _DiscountRule
+except Exception:
+    DiscountRule = None
+
+class DiscountRuleAdmin(admin.ModelAdmin):
+    list_display = tuple(
+        col for col in ("id", "threshold_cents", "discount_cents", "is_active", "sort_order", "created_at")
+        if hasattr(DiscountRule, col)  # type: ignore
+    ) or ("id",)
+    list_filter = tuple(col for col in ("is_active",) if hasattr(DiscountRule, col))  # type: ignore
+    ordering = tuple(col for col in ("sort_order", "-threshold_cents", "id") if hasattr(DiscountRule, col))  # type: ignore
+
+_safe_register(DiscountRule, DiscountRuleAdmin)

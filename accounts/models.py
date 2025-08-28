@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import AbstractUser, Group, Permission
 
@@ -44,9 +45,10 @@ class User(AbstractUser):
 class User_groups(models.Model):
     """
     Explicit 'through' table linking accounts.User <-> auth.Group.
-    Fixes: accounts.User_groups: (fields.E336) ... must have a FK to User/Group
+    Fixes: accounts.User_groups.user: (fields.E301) when using a swapped user model
     """
-    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE)
+    # ---- MINIMAL FIX: point FK to the swapped user model ----
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     group = models.ForeignKey(Group, on_delete=models.CASCADE)
 
     class Meta:
@@ -60,9 +62,10 @@ class User_groups(models.Model):
 class User_user_permissions(models.Model):
     """
     Explicit 'through' table linking accounts.User <-> auth.Permission.
-    Fixes: accounts.User_user_permissions: (fields.E336) ... must have a FK to User/Permission
+    Fixes: accounts.User_user_permissions.user: (fields.E301) when using a swapped user model
     """
-    user = models.ForeignKey("accounts.User", on_delete=models.CASCADE)
+    # ---- MINIMAL FIX: point FK to the swapped user model ----
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
 
     class Meta:

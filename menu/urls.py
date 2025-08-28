@@ -1,13 +1,20 @@
-# menu/urls.py
-from django.urls import path
-from .views import MenuItemListView, MenuItemDetailView
+from __future__ import annotations
+
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+
+from .views import MenuItemViewSet, MenuCategoryViewSet, CartView, CartMergeView
+
+app_name = "menu"
+
+router = DefaultRouter()
+router.register(r"menu-items", MenuItemViewSet, basename="menu-item")
+router.register(r"menu-categories", MenuCategoryViewSet, basename="menu-category")
 
 urlpatterns = [
-    # Stable
-    path("menu/items/", MenuItemListView.as_view(), name="menu-items"),
-    path("menu/items/<int:pk>/", MenuItemDetailView.as_view(), name="menu-item-detail"),
-
-    # Compatibility alias for older JS that might call /api/items/
-    path("items/", MenuItemListView.as_view(), name="menu-items-compat"),
-    path("items/<int:pk>/", MenuItemDetailView.as_view(), name="menu-item-detail-compat"),
+    # DRF routers for menu data
+    path("", include(router.urls)),
+    # Minimal cart endpoints used by storefront JS (optional; session-backed)
+    path("cart/", CartView.as_view(), name="cart"),
+    path("cart/merge/", CartMergeView.as_view(), name="cart-merge"),
 ]

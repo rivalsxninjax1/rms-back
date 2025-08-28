@@ -1,5 +1,10 @@
-import { Link, NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../lib/auth'
+import { ReactNode } from 'react'
+
+interface LayoutProps {
+  children: ReactNode
+}
 
 const nav = [
 { to: '/', label: 'Dashboard' },
@@ -11,8 +16,9 @@ const nav = [
 { to: '/settings', label: 'Settings' },
 ]
 
-export default function Layout() {
+export default function Layout({ children }: LayoutProps) {
 const clear = useAuthStore((s) => s.clear)
+const location = useLocation()
 return (
 <div className="min-h-screen grid grid-cols-[240px_1fr] grid-rows-[56px_1fr]">
 <header className="col-span-2 h-14 border-b flex items-center px-4 justify-between">
@@ -25,25 +31,26 @@ onClick={clear}
 
 <aside className="border-r p-3">
 <nav className="space-y-1">
-{nav.map((n) => (
+{nav.map((n) => {
+  const isActive = n.to === '/' ? location.pathname === '/' : location.pathname.startsWith(n.to)
+  return (
 <NavLink
 key={n.to}
 to={n.to}
-end={n.to === '/'}
-className={({ isActive }) =>
-`block rounded-md px-3 py-2 text-sm hover:bg-gray-100 ${
+exact={n.to === '/'}
+className={`block rounded-md px-3 py-2 text-sm hover:bg-gray-100 ${
 isActive ? 'bg-gray-100 font-medium' : ''
-}`
-}
+}`}
 >
 {n.label}
 </NavLink>
-))}
+  )
+})}
 </nav>
 </aside>
 
 <main className="p-6">
-<Outlet />
+{children}
 </main>
 </div>
 )

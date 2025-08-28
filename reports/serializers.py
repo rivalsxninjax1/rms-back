@@ -1,17 +1,17 @@
+from __future__ import annotations
+
 from rest_framework import serializers
+
 from .models import DailySales, ShiftReport
 
+
 class DailySalesSerializer(serializers.ModelSerializer):
-    location_name = serializers.CharField(source='location.name', read_only=True)
-    
     class Meta:
         model = DailySales
-        fields = '__all__'
+        fields = ["id", "date", "total_orders", "subtotal_cents", "tip_cents", "discount_cents", "total_cents", "created_at"]
+
 
 class ShiftReportSerializer(serializers.ModelSerializer):
-    location_name = serializers.CharField(source='location.name', read_only=True)
-    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
-    
     class Meta:
         model = ShiftReport
-        fields = '__all__'
+        fields = ["id", "date", "shift", "staff", "orders_count", "total_cents", "created_at"]
