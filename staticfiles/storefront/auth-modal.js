@@ -103,6 +103,7 @@
     
     // Fire auth event for other parts of the app
     window.dispatchEvent(new CustomEvent('auth:login'));
+    window.dispatchEvent(new CustomEvent('authSuccess'));
   }
 
   // Login form handler

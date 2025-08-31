@@ -8,6 +8,7 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse, HttpResponse
 from django.shortcuts import resolve_url
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_POST
 
@@ -349,7 +350,7 @@ def webhook(request: HttpRequest) -> HttpResponse:
     etype = event.get("type")
     data = event.get("data", {}).get("object", {})
 
-    # checkout.session.completed → mark order paid
+    # checkout.session.completed → mark order paid and clear cart
     if etype == "checkout.session.completed":
         session_id = data.get("id", "")
         payment_intent = data.get("payment_intent", "") or ""
@@ -359,6 +360,10 @@ def webhook(request: HttpRequest) -> HttpResponse:
                 order.stripe_payment_intent = str(payment_intent)
             order.status = "paid"
             order.save(update_fields=["status", "stripe_payment_intent"])
+            
+            # Clear session cart for the user after successful payment
+            _clear_user_session_cart(order.created_by)
+            
         except Order.DoesNotExist:
             pass
 
@@ -371,7 +376,56 @@ def webhook(request: HttpRequest) -> HttpResponse:
                 if order.status != "paid":
                     order.status = "paid"
                     order.save(update_fields=["status"])
+                    
+                    # Clear session cart for the user after successful payment
+                    _clear_user_session_cart(order.created_by)
+                    
             except Order.DoesNotExist:
                 pass
 
     return HttpResponse(status=200)
+
+
+def _clear_user_session_cart(user):
+    """
+    Clear the session cart for a specific user after successful payment.
+    This is called from the webhook handler when payment is confirmed.
+    """
+    if not user:
+        return
+        
+    try:
+        from django.contrib.sessions.models import Session
+        from django.contrib.auth.models import AnonymousUser
+        
+        # For authenticated users, we need to find their active sessions
+        # and clear the cart data from those sessions
+        if user and not isinstance(user, AnonymousUser):
+            # Get all active sessions
+            sessions = Session.objects.filter(expire_date__gte=timezone.now())
+            
+            for session in sessions:
+                try:
+                    session_data = session.get_decoded()
+                    # Check if this session belongs to our user
+                    if session_data.get('_auth_user_id') == str(user.id):
+                        # Clear cart-related session data
+                        if 'cart' in session_data:
+                            del session_data['cart']
+                        if 'cart_last_activity' in session_data:
+                            del session_data['cart_last_activity']
+                        if 'cart_last_modified' in session_data:
+                            del session_data['cart_last_modified']
+                        if '_cart_init_done' in session_data:
+                            del session_data['_cart_init_done']
+                        
+                        # Save the updated session
+                        session.session_data = session.encode(session_data)
+                        session.save()
+                except Exception:
+                    # Skip sessions that can't be decoded or updated
+                    continue
+                    
+    except Exception:
+        # Fail silently - cart clearing is not critical for payment processing
+        pass

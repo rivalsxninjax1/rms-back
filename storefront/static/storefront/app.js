@@ -108,13 +108,20 @@ const cart = {
     const key = String(id);
     const delta = Math.max(1, Number(qty || 1));
     if (!s.items[key]) return;
-    const next = Number(s.items[key].qty || 0) - delta;
-    if (next > 0) {
+    const currentQty = Number(s.items[key].qty || 0);
+    const next = currentQty - delta;
+    
+    // Only allow removal if it would result in quantity >= 1
+    // For complete removal, use a special high quantity (999) or call removeCompletely
+    if (next >= 1) {
       s.items[key].qty = next;
-    } else {
+      this._save(s);
+    } else if (delta >= 999) {
+      // Allow complete removal only with high delta (999+)
       delete s.items[key];
+      this._save(s);
     }
-    this._save(s);
+    // Otherwise, do nothing - prevent quantity from going below 1
   },
   setQty(id, qty) {
     const s = this._state();
@@ -404,8 +411,128 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 /* ============================================================================
+ * Cart API functions for cart-render.js compatibility
+ * ============================================================================ */
+async function cartApiAdd(id, qty = 1) {
+  console.log(`cartApiAdd called: id=${id}, qty=${qty}`);
+  
+  if (qty > 0) {
+    cart.add(id, {}, qty);
+  } else if (qty < 0) {
+    cart.remove(id, Math.abs(qty));
+  }
+  
+  // Re-render cart badges after update
+  renderCartBadges();
+  
+  // Sync with server
+  await syncCartWithServer();
+  
+  console.log('Cart updated, new count:', cart.count());
+}
+
+async function cartApiRemove(id, qty = 1) {
+  console.log(`cartApiRemove called: id=${id}, qty=${qty}`);
+  cart.remove(id, qty);
+  renderCartBadges();
+  
+  // Sync with server
+  await syncCartWithServer();
+  
+  console.log('Item removed, new count:', cart.count());
+}
+
+/* ============================================================================
+ * Cart synchronization with server
+ * ============================================================================ */
+async function syncCartWithServer() {
+  try {
+    const cartSnapshot = cart.snapshot();
+    const cartItems = cartSnapshot.items || [];
+    
+    if (cartItems.length === 0) {
+      // If cart is empty, still sync to clear server cart
+      await api('/api/cart/sync/', {
+        method: 'POST',
+        body: JSON.stringify({ items: [] })
+      });
+      return;
+    }
+    
+    // Convert cart format to server expected format
+    const serverItems = cartItems.map(item => ({
+      id: parseInt(item.id),
+      quantity: parseInt(item.qty)
+    }));
+    
+    await api('/api/cart/sync/', {
+      method: 'POST',
+      body: JSON.stringify({ items: serverItems })
+    });
+    
+    console.log('Cart synced with server:', serverItems.length, 'items');
+  } catch (error) {
+    console.error('Failed to sync cart with server:', error);
+  }
+}
+
+/* ============================================================================
+ * Cart API Get function for cart-render.js compatibility
+ * ============================================================================ */
+async function cartApiGet() {
+  // First try to get data from server
+  try {
+    const r = await fetch("/api/orders/cart-simple/", { 
+      credentials: "include"
+    });
+    
+    let serverData = { items: [] };
+    if (r.ok) {
+      serverData = await r.json();
+    }
+    
+    // If server has no items, check localStorage cart_v1
+    if (!serverData.items || serverData.items.length === 0) {
+      try {
+        const cartSnapshot = cart.snapshot();
+        const items = cartSnapshot.items || [];
+        
+        // Convert cart format to expected format
+        const formattedItems = items.map(item => ({
+          id: parseInt(item.id),
+          name: item.name || `Item ${item.id}`,
+          quantity: item.qty || 0,
+          unit_price: item.price || 0,
+          line_total: (item.qty || 0) * (item.price || 0),
+          total_unit_price: item.price || 0,
+          modifier_price: 0,
+          modifier_names: []
+        }));
+        
+        return {
+          items: formattedItems,
+          subtotal: formattedItems.reduce((sum, item) => sum + (item.line_total || 0), 0).toFixed(2),
+          meta: cartSnapshot
+        };
+      } catch (e) {
+        console.error('Error reading cart from localStorage:', e);
+      }
+    }
+    
+    return serverData;
+  } catch (error) {
+    console.error('Error in cartApiGet:', error);
+    return { items: [] };
+  }
+}
+
+/* ============================================================================
  * Expose globals for compatibility
  * ============================================================================ */
 window.cart = cart;
 window.api = api;
 window.money = money;
+window.renderCartBadges = renderCartBadges;
+window.cartApiAdd = cartApiAdd;
+window.cartApiRemove = cartApiRemove;
+window.cartApiGet = cartApiGet;

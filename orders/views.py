@@ -12,6 +12,10 @@ from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import action
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.http import JsonResponse
+from django.views.decorators.http import require_http_methods
 
 from .models import Order, OrderItem
 from menu.models import MenuItem
@@ -68,19 +72,25 @@ def _normalize_items(items_in: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for raw in items_in or []:
         pid = raw.get("menu_item_id") or raw.get("menu_item") or raw.get("product") or raw.get("id")
         qty = raw.get("quantity") or raw.get("qty") or 1
+        modifiers = raw.get("modifiers", [])
         try:
             pid = int(pid); qty = int(qty)
         except Exception:
             continue
         if pid > 0 and qty > 0:
-            out.append({"id": pid, "quantity": qty})
+            item = {"id": pid, "quantity": qty}
+            if modifiers and isinstance(modifiers, list):
+                item["modifiers"] = modifiers
+            out.append(item)
     return out
 
 def _cart_get(request) -> List[Dict[str, Any]]:
     return list(request.session.get("cart", []))
 
 def _cart_set(request, items: List[Dict[str, Any]]):
+    from django.utils import timezone
     request.session["cart"] = items
+    request.session["cart_last_modified"] = timezone.now().isoformat()
     request.session.modified = True
 
 def _cart_meta_get(request) -> Dict[str, Any]:
@@ -91,21 +101,59 @@ def _cart_meta_set(request, meta: Dict[str, Any]):
     request.session.modified = True
 
 def _enrich(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Decimal]:
+    from menu.models import Modifier, MenuItem
+    
     enriched: List[Dict[str, Any]] = []
     subtotal = Decimal("0")
     for it in items:
         pid = int(it["id"])
         qty = int(it.get("quantity", 1))
+        modifiers = it.get("modifiers", [])
+        
         name, unit = _fetch_menu_item(pid)
-        line = unit * qty
+        
+        # Get menu item image
+        image_url = None
+        try:
+            menu_item = MenuItem.objects.get(id=pid)
+            if menu_item.image:
+                image_url = menu_item.image.url
+        except MenuItem.DoesNotExist:
+            pass
+        
+        # Calculate modifier price
+        modifier_price = Decimal("0.00")
+        modifier_names = []
+        if modifiers:
+            modifier_ids = [m.get("id") for m in modifiers if m.get("id")]
+            if modifier_ids:
+                modifier_objs = Modifier.objects.filter(id__in=modifier_ids, is_available=True)
+                for mod in modifier_objs:
+                    modifier_price += mod.price
+                    modifier_names.append(mod.name)
+        
+        item_unit_price = unit + modifier_price
+        line = item_unit_price * qty
         subtotal += line
-        enriched.append({
+        
+        enriched_item = {
             "id": pid,
             "name": name,
             "quantity": qty,
             "unit_price": str(unit),
+            "modifier_price": str(modifier_price),
+            "total_unit_price": str(item_unit_price),
             "line_total": str(line),
-        })
+        }
+        
+        if image_url:
+            enriched_item["image"] = image_url
+        
+        if modifiers:
+            enriched_item["modifiers"] = modifiers
+            enriched_item["modifier_names"] = modifier_names
+            
+        enriched.append(enriched_item)
     return enriched, subtotal
 
 # Align by explicit RMS Table id (preferred), else by number
@@ -150,12 +198,19 @@ def _align_table_by_number(order: Order, table_number_input: Optional[int]) -> N
 
 
 # ---------- Session cart endpoints (guest) and DB cart (auth) ----------
+@method_decorator(csrf_exempt, name='dispatch')
 class SessionCartViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get_permissions(self):
+        """Override to ensure AllowAny for all actions"""
+        return [AllowAny()]
 
     def list(self, request):
         user = getattr(request, "user", None)
         if user and getattr(user, "is_authenticated", False):
+            from menu.models import MenuItem
             order = (
                 Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
                 .prefetch_related("items__menu_item")
@@ -167,20 +222,63 @@ class SessionCartViewSet(viewsets.ViewSet):
                     pid = getattr(it, "menu_item_id", None)
                     qty = int(getattr(it, "quantity", 0))
                     name, unit = _fetch_menu_item(pid)
-                    items.append({
+                    
+                    # Get menu item image
+                    image_url = None
+                    try:
+                        menu_item = MenuItem.objects.get(id=pid)
+                        if menu_item.image:
+                            image_url = menu_item.image.url
+                    except MenuItem.DoesNotExist:
+                        pass
+                    
+                    item_data = {
                         "id": pid,
                         "name": name,
                         "quantity": qty,
                         "unit_price": str(unit),
                         "line_total": str((unit * qty).quantize(Decimal("0.01"))),
-                    })
-            subtotal = str(sum(Decimal(i["unit_price"]) * i["quantity"] for i in items) if items else Decimal("0.00"))
-            return Response({"items": items, "subtotal": subtotal, "currency": _currency(), "meta": _cart_meta_get(request)})
+                    }
+                    
+                    if image_url:
+                        item_data["image"] = image_url
+                    
+                    items.append(item_data)
+            subtotal = sum(Decimal(i["unit_price"]) * i["quantity"] for i in items) if items else Decimal("0.00")
+            
+            # Get tip amount from session
+            tip_amount = Decimal(str(request.session.get("cart_tip_amount", 0)))
+            
+            # Calculate grand total
+            grand_total = subtotal + tip_amount
+            
+            return Response({
+                "items": items, 
+                "subtotal": str(subtotal), 
+                "tip_amount": str(tip_amount),
+                "grand_total": str(grand_total),
+                "currency": _currency(), 
+                "meta": _cart_meta_get(request)
+            })
 
         items = _normalize_items(_cart_get(request))
         enriched, subtotal = _enrich(items)
         meta = _cart_meta_get(request)
-        return Response({"items": enriched, "subtotal": str(subtotal), "currency": _currency(), "meta": meta})
+        
+        # Get tip amount from session
+        tip_amount = Decimal(str(request.session.get("cart_tip_amount", 0)))
+        
+        # Calculate grand total
+        grand_total = subtotal + tip_amount
+        
+        return Response({
+            "items": enriched, 
+            "subtotal": str(subtotal), 
+            "tip_amount": str(tip_amount),
+            "grand_total": str(grand_total),
+            "currency": _currency(), 
+            "meta": meta
+        })
 
     def create(self, request):
         user = getattr(request, "user", None)
@@ -198,8 +296,9 @@ class SessionCartViewSet(viewsets.ViewSet):
                 order.items.all().delete()
                 for it in items:
                     pid = int(it["id"]); qty = int(it["quantity"])
+                    modifiers = it.get("modifiers", [])
                     _, unit = _fetch_menu_item(pid)
-                    OrderItem.objects.create(order=order, menu_item_id=pid, quantity=qty, unit_price=unit)
+                    OrderItem.objects.create(order=order, menu_item_id=pid, quantity=qty, unit_price=unit, modifiers=modifiers)
                 resp_items = []
                 for it in order.items.all():
                     pid = it.menu_item_id; qty = int(it.quantity); name, unit = _fetch_menu_item(pid)
@@ -207,13 +306,41 @@ class SessionCartViewSet(viewsets.ViewSet):
                         "id": pid, "name": name, "quantity": qty,
                         "unit_price": str(unit), "line_total": str((unit*qty).quantize(Decimal("0.01")))
                     })
-                subtotal = str(sum(Decimal(i["unit_price"]) * i["quantity"] for i in resp_items) if resp_items else Decimal("0.00"))
-                return Response({"status": "ok", "items": resp_items, "subtotal": subtotal, "currency": _currency()})
+                subtotal = sum(Decimal(i["unit_price"]) * i["quantity"] for i in resp_items) if resp_items else Decimal("0.00")
+                
+                # Get tip amount from session
+                tip_amount = Decimal(str(request.session.get("cart_tip_amount", 0)))
+                
+                # Calculate grand total
+                grand_total = subtotal + tip_amount
+                
+                return Response({
+                    "status": "ok", 
+                    "items": resp_items, 
+                    "subtotal": str(subtotal),
+                    "tip_amount": str(tip_amount),
+                    "grand_total": str(grand_total),
+                    "currency": _currency()
+                })
 
         items = _normalize_items(request.data.get("items", []))
         _cart_set(request, items)
         enriched, subtotal = _enrich(items)
-        return Response({"status": "ok", "items": enriched, "subtotal": str(subtotal), "currency": _currency()})
+        
+        # Get tip amount from session
+        tip_amount = Decimal(str(request.session.get("cart_tip_amount", 0)))
+        
+        # Calculate grand total
+        grand_total = subtotal + tip_amount
+        
+        return Response({
+            "status": "ok", 
+            "items": enriched, 
+            "subtotal": str(subtotal),
+            "tip_amount": str(tip_amount),
+            "grand_total": str(grand_total),
+            "currency": _currency()
+        })
 
     @action(methods=["post"], detail=False, url_path="items", permission_classes=[AllowAny])
     def add_item(self, request):
@@ -222,6 +349,7 @@ class SessionCartViewSet(viewsets.ViewSet):
             # ---- AUTH: support +/- deltas (including negative)
             pid = request.data.get("menu_item_id") or request.data.get("id")
             qty = request.data.get("quantity") or 1
+            modifiers = request.data.get("modifiers", [])
             try:
                 pid = int(pid); qty = int(qty)
             except Exception:
@@ -244,10 +372,12 @@ class SessionCartViewSet(viewsets.ViewSet):
                         oi.delete()
                     else:
                         oi.unit_price = unit
-                        oi.save(update_fields=["quantity", "unit_price"])
+                        if modifiers:
+                            oi.modifiers = modifiers
+                        oi.save(update_fields=["quantity", "unit_price", "modifiers"])
                 else:
                     if qty > 0:
-                        OrderItem.objects.create(order=order, menu_item_id=pid, quantity=qty, unit_price=unit)
+                        OrderItem.objects.create(order=order, menu_item_id=pid, quantity=qty, unit_price=unit, modifiers=modifiers)
                 items = []
                 for it in order.items.all():
                     p = it.menu_item_id; q = int(it.quantity); name, u = _fetch_menu_item(p)
@@ -260,6 +390,7 @@ class SessionCartViewSet(viewsets.ViewSet):
         try:
             pid = int(request.data.get("menu_item_id") or request.data.get("id") or 0)
             qty = int(request.data.get("quantity") or 1)
+            modifiers = request.data.get("modifiers", [])
         except Exception:
             return Response({"detail": "Invalid id/quantity."}, status=400)
         if pid <= 0:
@@ -267,10 +398,13 @@ class SessionCartViewSet(viewsets.ViewSet):
 
         items = list(_cart_get(request))  # raw session items: [{"id":..,"quantity":..}, ...]
         # Coerce types and ensure structure
-        norm_items: List[Dict[str, int]] = []
+        norm_items: List[Dict[str, Any]] = []
         for it in items:
             try:
-                norm_items.append({"id": int(it.get("id")), "quantity": int(it.get("quantity", 0))})
+                item_dict = {"id": int(it.get("id")), "quantity": int(it.get("quantity", 0))}
+                if "modifiers" in it:
+                    item_dict["modifiers"] = it["modifiers"]
+                norm_items.append(item_dict)
             except Exception:
                 continue
 
@@ -278,11 +412,16 @@ class SessionCartViewSet(viewsets.ViewSet):
         for it in norm_items:
             if it["id"] == pid:
                 it["quantity"] = max(0, it["quantity"] + qty)
+                if modifiers:
+                    it["modifiers"] = modifiers
                 found = True
                 break
 
         if not found and qty > 0:
-            norm_items.append({"id": pid, "quantity": qty})
+            new_item = {"id": pid, "quantity": qty}
+            if modifiers:
+                new_item["modifiers"] = modifiers
+            norm_items.append(new_item)
 
         # Drop zeros
         norm_items = [it for it in norm_items if it["quantity"] > 0]
@@ -368,21 +507,161 @@ class SessionCartViewSet(viewsets.ViewSet):
             if not order:
                 order = Order.objects.create(created_by=request.user, status="PENDING", currency=_currency())
 
-            existing = {oi.menu_item_id: oi for oi in order.items.select_related("menu_item")}
+            # Get all existing order items
+            existing_items = list(order.items.select_related("menu_item"))
+            
             for it in session_items:
                 pid, qty = int(it["id"]), int(it["quantity"])
+                modifiers = it.get("modifiers", [])
                 _, unit = _fetch_menu_item(pid)
-                if pid in existing:
-                    oi = existing[pid]
-                    oi.quantity = int(oi.quantity) + qty
-                    oi.unit_price = unit
-                    oi.save(update_fields=["quantity", "unit_price"])
+                
+                # Look for exact match (same menu item + same modifiers)
+                matching_item = None
+                for oi in existing_items:
+                    if (oi.menu_item_id == pid and 
+                        self._modifiers_match(oi.modifiers or [], modifiers)):
+                        matching_item = oi
+                        break
+                
+                if matching_item:
+                    # Sum quantities for exact matches
+                    matching_item.quantity = int(matching_item.quantity) + qty
+                    matching_item.unit_price = unit
+                    matching_item.save(update_fields=["quantity", "unit_price"])
                 else:
-                    OrderItem.objects.create(order=order, menu_item_id=pid, quantity=qty, unit_price=unit)
+                    # Create new item for different modifier combinations
+                    new_item = OrderItem.objects.create(
+                        order=order, 
+                        menu_item_id=pid, 
+                        quantity=qty, 
+                        unit_price=unit, 
+                        modifiers=modifiers
+                    )
+                    existing_items.append(new_item)
 
             _cart_set(request, [])
 
         return Response({"status": "ok", "order_id": order.id})
+    
+    def _modifiers_match(self, modifiers1, modifiers2):
+        """Check if two modifier lists are equivalent."""
+        # Normalize both lists - sort by modifier ID for comparison
+        def normalize_modifiers(mods):
+            if not mods:
+                return []
+            # Sort by modifier ID to ensure consistent comparison
+            return sorted(mods, key=lambda x: x.get('id', 0) if isinstance(x, dict) else str(x))
+        
+        norm1 = normalize_modifiers(modifiers1)
+        norm2 = normalize_modifiers(modifiers2)
+        
+        return norm1 == norm2
+
+    @action(methods=["get"], detail=False, url_path="modifiers", permission_classes=[AllowAny])
+    def get_modifiers(self, request):
+        """Get available modifiers/extras for cart items."""
+        from menu.models import ModifierGroup, Modifier
+        
+        # Get cart items to find relevant modifiers
+        user = getattr(request, "user", None)
+        menu_item_ids = []
+        
+        if user and getattr(user, "is_authenticated", False):
+            order = (
+                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                .prefetch_related("items__menu_item")
+                .first()
+            )
+            if order:
+                menu_item_ids = [item.menu_item_id for item in order.items.all()]
+        else:
+            items = _normalize_items(_cart_get(request))
+            menu_item_ids = [int(item["id"]) for item in items]
+        
+        # Get modifier groups for these menu items
+        modifier_groups = ModifierGroup.objects.filter(
+            menu_item_id__in=menu_item_ids
+        ).prefetch_related('modifiers').order_by('sort_order')
+        
+        result = []
+        for group in modifier_groups:
+            modifiers = []
+            for modifier in group.modifiers.filter(is_available=True).order_by('sort_order'):
+                modifiers.append({
+                    "id": modifier.id,
+                    "name": modifier.name,
+                    "price": str(modifier.price),
+                })
+            
+            if modifiers:  # Only include groups that have available modifiers
+                result.append({
+                    "id": group.id,
+                    "name": group.name,
+                    "menu_item_id": group.menu_item_id,
+                    "is_required": group.is_required,
+                    "min_select": group.min_select,
+                    "max_select": group.max_select,
+                    "modifiers": modifiers,
+                })
+        
+        return Response({"modifier_groups": result})
+
+    @action(methods=["get"], detail=False, url_path="cart-expiration", permission_classes=[AllowAny])
+    def cart_expiration(self, request):
+        """Check if cart has expired and return expiration info."""
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Cart expires after 30 minutes of inactivity
+        CART_EXPIRATION_MINUTES = 30
+        
+        user = getattr(request, "user", None)
+        if user and getattr(user, "is_authenticated", False):
+            # For authenticated users, check DB cart (pending order)
+            order = (
+                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                .first()
+            )
+            if not order:
+                return Response({"expired": True, "has_items": False})
+            
+            # Check if order was updated recently
+            expiration_time = order.updated_at + timedelta(minutes=CART_EXPIRATION_MINUTES)
+            is_expired = timezone.now() > expiration_time
+            has_items = order.items.exists()
+            
+            return Response({
+                "expired": is_expired,
+                "has_items": has_items,
+                "expiration_time": expiration_time.isoformat(),
+                "minutes_remaining": max(0, int((expiration_time - timezone.now()).total_seconds() / 60))
+            })
+        else:
+            # For session carts, check session timestamp
+            cart_items = _cart_get(request)
+            has_items = len(cart_items) > 0
+            
+            # Get last cart modification time from session
+            last_modified = request.session.get("cart_last_modified")
+            if not last_modified:
+                # If no timestamp, consider it expired if it has items
+                return Response({"expired": has_items, "has_items": has_items})
+            
+            try:
+                from datetime import datetime
+                last_modified_dt = datetime.fromisoformat(last_modified.replace('Z', '+00:00'))
+                expiration_time = last_modified_dt + timedelta(minutes=CART_EXPIRATION_MINUTES)
+                is_expired = timezone.now() > expiration_time
+                
+                return Response({
+                    "expired": is_expired,
+                    "has_items": has_items,
+                    "expiration_time": expiration_time.isoformat(),
+                    "minutes_remaining": max(0, int((expiration_time - timezone.now()).total_seconds() / 60))
+                })
+            except Exception:
+                # If timestamp parsing fails, consider expired
+                return Response({"expired": True, "has_items": has_items})
 
 
 # ---------- Orders / Checkout ----------
@@ -562,3 +841,72 @@ class OrderViewSet(viewsets.ModelViewSet):
                 },
                 status=201,
             )
+
+
+# Simple function-based view for cart to bypass DRF issues
+@csrf_exempt
+@require_http_methods(["GET"])
+def simple_cart_view(request):
+    """Simple cart view to bypass DRF permission issues"""
+    try:
+        user = getattr(request, "user", None)
+        if user and getattr(user, "is_authenticated", False):
+            order = (
+                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                .prefetch_related("items__menu_item")
+                .first()
+            )
+            items = []
+            if order:
+                for it in order.items.all():
+                    pid = getattr(it, "menu_item_id", None)
+                    qty = int(getattr(it, "quantity", 0))
+                    name, unit = _fetch_menu_item(pid)
+                    items.append({
+                        "id": pid,
+                        "name": name,
+                        "quantity": qty,
+                        "unit_price": str(unit),
+                        "line_total": str((unit * qty).quantize(Decimal("0.01"))),
+                    })
+            subtotal = str(sum(Decimal(i["unit_price"]) * i["quantity"] for i in items) if items else Decimal("0.00"))
+            return JsonResponse({"items": items, "subtotal": subtotal, "currency": _currency(), "meta": _cart_meta_get(request)})
+
+        items = _normalize_items(_cart_get(request))
+        enriched, subtotal = _enrich(items)
+        meta = _cart_meta_get(request)
+        return JsonResponse({"items": enriched, "subtotal": str(subtotal), "currency": _currency(), "meta": meta})
+    except Exception as e:
+        return JsonResponse({"error": str(e), "items": [], "subtotal": "0.00", "currency": _currency(), "meta": {}}, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def cart_expiration_view(request):
+    """Check if cart has expired and return expiration info."""
+    try:
+        # Check if middleware set the expiration flag
+        cart_expired = request.session.pop('cart_expired', False)
+        
+        # Get current cart status
+        user = getattr(request, "user", None)
+        has_items = False
+        
+        if user and getattr(user, "is_authenticated", False):
+            # For authenticated users, check DB cart
+            order = (
+                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                .first()
+            )
+            has_items = order and order.items.exists()
+        else:
+            # For session carts
+            cart_items = _cart_get(request)
+            has_items = len(cart_items) > 0
+        
+        return JsonResponse({
+            "expired": cart_expired,
+            "has_items": has_items
+        })
+    except Exception as e:
+        return JsonResponse({"error": str(e), "expired": False, "has_items": False}, status=500)

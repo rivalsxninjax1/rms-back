@@ -4,6 +4,50 @@
  * - Requires login (now opens the login/signup modal if not authenticated)
  * - Builds the Order on the server and returns a Stripe checkout_url
  */
+
+// Make cartApiGet globally available for cart-render.js
+console.log('cart-pay.js is executing');
+window.cartApiGet = async function cartApiGet(){
+  const r = await fetch("/api/orders/cart-simple/", { 
+    credentials: "include"
+  });
+  if (!r.ok) return { items: [] };
+  return await r.json();
+}
+console.log('cartApiGet defined:', typeof window.cartApiGet);
+
+// Check for cart expiration message
+window.checkCartExpiration = async function checkCartExpiration() {
+  try {
+    const r = await fetch("/api/orders/cart-expired/", { 
+      credentials: "include"
+    });
+    if (r.ok) {
+      const data = await r.json();
+      if (data.expired) {
+        // Show expiration message
+        const message = "Your cart has expired after 25 minutes of inactivity.";
+        if (typeof showNotification === 'function') {
+          showNotification(message, 'warning');
+        } else {
+          alert(message);
+        }
+        // Refresh cart display
+        if (typeof window.renderCartList === 'function') {
+          window.renderCartList();
+        }
+      }
+    }
+  } catch (e) {
+    console.log('Cart expiration check failed:', e);
+  }
+};
+
+// Check for expiration on page load
+document.addEventListener('DOMContentLoaded', function() {
+  window.checkCartExpiration();
+});
+
 (function () {
   const $ = (sel, el=document) => el.querySelector(sel);
 
@@ -11,12 +55,6 @@
   function getCookie(name){
     const m = document.cookie.match(new RegExp("(^| )"+name+"=([^;]+)"));
     return m ? decodeURIComponent(m[2]) : "";
-  }
-
-  async function cartApiGet(){
-    const r = await fetch("/api/orders/cart/", { credentials: "include" });
-    if (!r.ok) return { items: [] };
-    return await r.json();
   }
 
   async function isAuthenticated(){
@@ -60,17 +98,64 @@
     return j;
   }
 
+  // Merge session cart into user cart after login
+  async function mergeSessionCart() {
+    try {
+      const r = await fetch("/api/orders/cart/merge/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCookie("csrftoken")
+        },
+        credentials: "include"
+      });
+      if (r.ok) {
+        console.log('Cart merged successfully');
+        // Refresh cart display
+        if (typeof window.renderCartList === 'function') {
+          window.renderCartList();
+        }
+      }
+    } catch (e) {
+      console.log('Cart merge failed:', e);
+    }
+  }
+
+  // Set up continuation after auth
+  window.__continueCheckoutAfterAuth = async function() {
+    try {
+      // First merge the session cart
+      await mergeSessionCart();
+      
+      // Then proceed with checkout
+      const payload = window.__pendingCheckoutPayload || {};
+      const result = await checkoutCreate(payload);
+      
+      if (result.checkout_url) {
+        window.location.href = result.checkout_url;
+      } else {
+        console.error('No checkout URL received');
+      }
+    } catch (e) {
+      console.error('Checkout continuation failed:', e);
+      alert('Checkout failed: ' + e.message);
+    } finally {
+      // Clean up
+      delete window.__pendingCheckoutPayload;
+    }
+  };
+
   function readMethod(){
     const el = document.querySelector('input[name="order_method_inline"]:checked');
     return el ? String(el.value || "").toUpperCase() : "";
   }
 
   function readSelectedTable(){
-    const sel = document.getElementById("table-select");
+    const sel = document.getElementById("tableSelect");
     if (!sel) return { table_id: null, table_number: null };
     const table_id = sel.value ? Number(sel.value) : null;
     const table_number = sel.selectedOptions && sel.selectedOptions[0]
-      ? Number(sel.selectedOptions[0].getAttribute("data-number"))
+      ? Number(sel.selectedOptions[0].textContent.match(/Table (\d+)/)?.[1])
       : null;
     return { table_id, table_number };
   }
@@ -78,6 +163,35 @@
   async function onPay(){
     // Must be logged in -> if not, open modal
     if (!(await isAuthenticated())){
+      // Store the checkout payload for after login
+      const method = readMethod();
+      if (!method){
+        alert("Please choose an order method.");
+        return;
+      }
+      
+      let table_id = null;
+      let table_number = null;
+      if (method === "DINE_IN"){
+        const sel = document.getElementById("tableSelect");
+        if (!sel || !sel.value){
+          alert("Please choose your table.");
+          return;
+        }
+        const t = readSelectedTable();
+        table_id = t.table_id;
+        table_number = t.table_number;
+      }
+      
+      const coupon_code = ($("#coupon-code") && $("#coupon-code").value || "").trim();
+      
+      window.__pendingCheckoutPayload = {
+        service_type: method === "UBEREATS" ? "UBER_EATS" : method,
+        table_id: table_id || undefined,
+        table_number: table_number || undefined,
+        coupon_code: coupon_code || undefined
+      };
+      
       requireAuthOrModal();
       return;
     }
@@ -101,7 +215,7 @@
     let table_id = null;
     let table_number = null;
     if (method === "DINE_IN"){
-      const sel = document.getElementById("table-select");
+      const sel = document.getElementById("tableSelect");
       if (!sel || !sel.value){
         alert("Please choose your table.");
         return;
@@ -152,5 +266,25 @@
         }
       });
     }
+
+    // Listen for successful login to continue checkout
+    document.addEventListener('authSuccess', function() {
+      if (window.__continueCheckoutAfterAuth) {
+        setTimeout(() => {
+          window.__continueCheckoutAfterAuth();
+        }, 100); // Small delay to ensure auth state is updated
+      }
+    });
   });
 })();
+
+// Export functions for use by other scripts
+window.cartPayFunctions = {
+  mergeSessionCart: async function() {
+    // This will be defined inside the IIFE, so we need to expose it
+    if (window.__continueCheckoutAfterAuth) {
+      // The merge function is already available through the continuation
+      return;
+    }
+  }
+};

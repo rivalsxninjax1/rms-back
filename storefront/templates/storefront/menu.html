@@ -17,71 +17,62 @@
       </div>
     {% endif %}
 
-    <div class="menu-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:20px;">
-      {% for item in items %}
-        <div class="menu-card" data-category="{{ item.category.id }}" style="border:1px solid #eee;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
-          <a href="{% url 'storefront:menu-item' item.id %}" style="text-decoration:none;color:inherit;">
-            <div style="aspect-ratio:4/3;background:#f7f7f7;display:flex;align-items:center;justify-content:center;">
-              {% if item.image %}
-                <img src="{{ item.image.url }}" alt="{{ item.name }}" style="width:100%;height:100%;object-fit:cover;">
-              {% else %}
-                <img src="{% static 'storefront/img/placeholder.svg' %}" alt="Menu Item" style="width:60%;opacity:.6;">
-              {% endif %}
-            </div>
-          </a>
-          <div style="padding:16px;">
-            <div style="margin-bottom:12px;">
-              <div style="font-weight:600;font-size:16px;margin-bottom:4px;">{{ item.name }}</div>
-              <div class="muted" style="font-size:14px;color:#666;margin-bottom:8px;">
-                {{ item.description|truncatewords:10 }}
+    {% if items %}
+      <div class="grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
+        {% for item in items %}
+          <div class="card" data-category="{{ item.category_id|default:'all' }}" style="border:1px solid #eee;border-radius:12px;overflow:hidden;background:#fff;">
+            <a href="{% url 'storefront:menu-item' item.id %}" style="display:block;color:inherit;text-decoration:none;">
+              <div style="aspect-ratio:4/3;background:#f7f7f7;display:flex;align-items:center;justify-content:center;">
+                {% if item.image %}
+                  <img src="{{ item.image.url }}" alt="{{ item.name }}" style="width:100%;height:100%;object-fit:cover;">
+                {% else %}
+                  <img src="{% static 'storefront/img/placeholder.svg' %}" alt="Menu Item" style="width:60%;opacity:.6;">
+                {% endif %}
               </div>
-              <div style="font-size:18px;font-weight:bold;color:#333;">
-                {{ DEFAULT_CURRENCY|default:"NPR" }} {{ item.price }}
+            </a>
+            <div style="padding:16px;">
+              <div style="margin-bottom:12px;">
+                <div style="font-weight:600;font-size:16px;margin-bottom:4px;">{{ item.name }}</div>
+                <div class="muted" style="font-size:14px;color:#666;margin-bottom:8px;">
+                  {{ item.description|truncatewords:10 }}
+                </div>
+                <div style="font-size:18px;font-weight:bold;color:#333;">
+                  {{ DEFAULT_CURRENCY|default:"NPR" }} {{ item.price }}
+                </div>
               </div>
-            </div>
-            <div style="display:flex;gap:8px;margin-top:12px;">
-              <a href="{% url 'storefront:menu-item' item.id %}" 
-                 class="btn btn-secondary" 
-                 style="flex:1;text-align:center;padding:8px 12px;border:1px solid #ddd;background:#f8f9fa;text-decoration:none;border-radius:6px;">
-                View
-              </a>
-              <button
-                class="btn btn-primary add-to-cart"
-                data-add="{{ item.id }}"
-                data-name="{{ item.name|escape }}"
-                data-price="{{ item.price }}"
-                data-image="{% if item.image %}{{ item.image.url }}{% endif %}"
-                style="flex:1;padding:8px 12px;background:#007bff;color:white;border:1px solid #007bff;border-radius:6px;cursor:pointer;"
-              >
-                Add to Cart
-              </button>
+              <div style="display:flex;gap:8px;margin-top:12px;">
+                <a href="{% url 'storefront:menu-item' item.id %}" 
+                   class="btn btn-secondary" 
+                   style="flex:1;text-align:center;padding:8px 12px;border:1px solid #ddd;background:#f8f9fa;text-decoration:none;border-radius:6px;">
+                  View
+                </a>
+                <!-- FIX: align data attributes with cart.js expectations -->
+                <button
+                  class="btn btn-primary add-to-cart"
+                  data-add-to-cart
+                  data-menu-id="{{ item.id }}"
+                  data-name="{{ item.name|escape }}"
+                  data-price="{{ item.price }}"
+                  data-image="{% if item.image %}{{ item.image.url }}{% endif %}"
+                  style="flex:1;text-align:center;padding:8px 12px;background:#007bff;color:#fff;border:none;border-radius:6px;cursor:pointer;"
+                >
+                  Add to Cart
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      {% empty %}
-        <div style="grid-column:1/-1;text-align:center;padding:40px;">
-          <h3>No menu items available</h3>
-          <p>Please check back later or contact us for more information.</p>
-        </div>
-      {% endfor %}
-    </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p>No items available.</p>
+    {% endif %}
   </div>
 
   <script>
-    window.DEFAULT_CURRENCY = "{{ DEFAULT_CURRENCY|default:'NPR' }}";
-    
-    // Category filtering
-    function filterByCategory(categoryId) {
-      const cards = document.querySelectorAll('.menu-card');
-      const buttons = document.querySelectorAll('.category-filter');
-      
-      // Update active button
-      buttons.forEach(btn => btn.classList.remove('active'));
-      event.target.classList.add('active');
-      
-      // Filter cards
+    function filterByCategory(catId) {
+      const cards = document.querySelectorAll('.card[data-category]');
       cards.forEach(card => {
-        if (categoryId === 'all' || card.dataset.category === categoryId) {
+        if (catId === 'all' || String(card.getAttribute('data-category')) === String(catId)) {
           card.style.display = 'block';
         } else {
           card.style.display = 'none';
@@ -96,46 +87,11 @@
       margin: 0 4px 4px 0;
       border: 1px solid #ddd;
       background: #f8f9fa;
-      border-radius: 6px;
+      border-radius: 20px;
       cursor: pointer;
-      transition: all 0.2s;
     }
-    
-    .category-filter.active,
-    .category-filter:hover {
-      background: #007bff;
-      color: white;
-      border-color: #007bff;
-    }
-    
-    .btn {
-      border: none;
-      border-radius: 6px;
-      padding: 8px 12px;
-      cursor: pointer;
-      transition: all 0.2s;
-      font-size: 14px;
-      text-decoration: none;
-      display: inline-block;
-    }
-    
-    .btn-primary {
-      background: #007bff;
-      color: white;
-    }
-    
-    .btn-primary:hover {
-      background: #0056b3;
-    }
-    
-    .btn-secondary {
-      background: #f8f9fa;
-      color: #333;
-      border: 1px solid #ddd;
-    }
-    
-    .btn-secondary:hover {
-      background: #e9ecef;
-    }
+    .category-filter.active { background:#e9ecef; }
+    .btn { transition: all .15s ease; }
+    .btn:hover { transform: translateY(-1px); }
   </style>
 {% endblock %}

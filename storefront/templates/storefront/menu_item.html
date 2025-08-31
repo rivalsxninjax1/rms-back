@@ -19,31 +19,23 @@
       </div>
 
       <div>
-        <h1 style="margin:0 0 15px;font-size:28px;color:#333;">{{ item.name }}</h1>
+        <h1 style="margin-top:0;margin-bottom:8px;">{{ item.name }}</h1>
+        <div class="muted" style="color:#666;margin-bottom:16px;">{{ item.description }}</div>
 
-        <div style="margin:12px 0 20px;">
-          <span style="font-size:24px;font-weight:bold;color:#007bff;">
-            {{ DEFAULT_CURRENCY|default:"NPR" }} {{ item.price }}
-          </span>
+        <div style="font-size:22px;font-weight:700;margin-bottom:16px;">
+          {{ DEFAULT_CURRENCY|default:"NPR" }} {{ item.price }}
         </div>
 
-        <div style="margin-bottom:20px;">
-          <h3 style="font-size:16px;margin-bottom:8px;color:#666;">Description</h3>
-          <p style="color:#555;line-height:1.6;margin:0;">
-            {% if item.description %}
-              {{ item.description }}
-            {% else %}
-              No description available for this item.
-            {% endif %}
-          </p>
+        <div style="margin-bottom:16px;">
+          <span class="muted">Category:</span>
+          <strong>{{ item.category.name }}</strong>
         </div>
 
-        <div style="margin-bottom:20px;">
-          <h3 style="font-size:16px;margin-bottom:8px;color:#666;">Category</h3>
-          <span style="background:#f8f9fa;padding:4px 12px;border-radius:20px;color:#666;font-size:14px;">
-            {{ item.category.name }}
-          </span>
+        {% if item.is_spicy %}
+        <div style="margin-bottom:12px;">
+          <span style="background:#ef4444;color:white;padding:4px 12px;border-radius:20px;font-size:14px;">🌶️ Spicy</span>
         </div>
+        {% endif %}
 
         {% if item.is_vegetarian %}
         <div style="margin-bottom:20px;">
@@ -54,35 +46,34 @@
         {% endif %}
 
         <div style="margin-top:24px;display:flex;gap:12px;">
+          <!-- FIX: align data attributes with cart.js expectations -->
           <button
             type="button"
             class="btn btn-primary add-to-cart"
-            data-add="{{ item.id }}"
+            data-add-to-cart
+            data-menu-id="{{ item.id }}"
             data-name="{{ item.name|escape }}"
             data-price="{{ item.price }}"
             data-image="{% if item.image %}{{ item.image.url }}{% endif %}"
-            style="background:#007bff;color:white;border:none;padding:12px 24px;border-radius:8px;font-size:16px;font-weight:500;cursor:pointer;transition:all 0.2s;"
+            style="background:#007bff;color:white;border:none;padding:10px 16px;border-radius:8px;font-size:16px;font-weight:500;cursor:pointer;transition:all 0.2s;"
           >
             Add to Cart
           </button>
           <a href="{% url 'storefront:cart' %}" 
              class="btn btn-secondary" 
-             style="background:#f8f9fa;color:#333;border:1px solid #ddd;padding:12px 24px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:500;transition:all 0.2s;">
+             style="background:#f8f9fa;color:#333;border:1px solid #ddd;padding:10px 16px;border-radius:8px;text-decoration:none;font-size:16px;font-weight:500;transition:all 0.2s;">
             View Cart
           </a>
         </div>
       </div>
     </div>
     {% else %}
-    <div style="text-align:center;margin-top:60px;">
-      <h2>Menu Item Not Found</h2>
-      <p>The item you're looking for is not available.</p>
-      <a href="{% url 'storefront:menu' %}" style="color:#007bff;">← Back to Menu</a>
-    </div>
+      <p>Item not found.</p>
     {% endif %}
   </div>
 
   <style>
+    .muted { color:#666; }
     .btn-primary:hover {
       background: #0056b3 !important;
       transform: translateY(-1px);

@@ -72,6 +72,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # static in prod
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "orders.middleware.EnsureCartInitializedMiddleware",  # Initialize cart for anonymous users
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -172,7 +173,7 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"  # collectstatic output for prod
 STATICFILES_DIRS = [
-    BASE_DIR / "storefront" / "static",  # your actual source JS/CSS/images
+    # Removed storefront/static as it's automatically found by AppDirectoriesFinder
 ]
 
 MEDIA_URL = "/media/"
@@ -190,7 +191,7 @@ STORAGES = {
     },
     # staticfiles storage (served by WhiteNoise in prod)
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
 }
 

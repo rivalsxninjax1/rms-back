@@ -1,6 +1,6 @@
 # storefront/urls.py
 from django.urls import path
-from . import views
+from . import views, api
 from .views import MenuItemsView, MyOrdersView
 from accounts.views import whoami as session_ping  # root-level session ping for JS
 
@@ -29,4 +29,17 @@ urlpatterns = [
 
     # NEW: session/CSRF ping for frontend JS (safe alias to accounts.whoami)
     path("session/ping/", session_ping, name="session_ping"),
+
+    # Test cart debugging
+    path("test-cart-debug/", views.test_cart_debug, name="test_cart_debug"),
+    path("debug-cart/", views.debug_cart, name="debug_cart"),
+    path("debug-session-cart/", views.debug_session_cart, name="debug_session_cart"),
+    path("test-cart-display/", views.test_cart_display, name="test_cart_display"),
+    path("debug-cart-controls/", views.debug_cart_controls, name="debug_cart_controls"),
+    path("set-test-cart/", views.set_test_cart, name="set_test_cart"),
+    path("test-cart-buttons/", views.test_cart_buttons, name="test_cart_buttons"),
+
+    path("api/tables/", api.api_tables, name="api-tables"),
+    path("api/cart/sync/", api.api_cart_sync, name="api-cart-sync"),
+    path("api/cart/set-tip/", api.api_cart_set_tip, name="api-cart-tip"),
 ]

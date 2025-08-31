@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Cart System</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        button { padding: 10px 15px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .status { margin: 10px 0; padding: 10px; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Cart System Debug Tool</h1>
+    
+    <div>
+        <button onclick="addTestItems()">Add Test Items to cart_v1</button>
+        <button onclick="addTestItemsCartFormat()">Add Test Items to cart format</button>
+        <button onclick="checkAllCarts()">Check All Cart Data</button>
+        <button onclick="clearAllCarts()">Clear All Carts</button>
+        <button onclick="testCartApiGet()">Test cartApiGet Function</button>
+        <button onclick="goToCart()">Go to Cart Page</button>
+    </div>
+    
+    <div id="status"></div>
+    
+    <script>
+        const CART_V1_KEY = "cart_v1";
+        const CART_KEY = "cart";
+        
+        function log(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            const div = document.createElement('div');
+            div.className = `status ${type}`;
+            div.innerHTML = message;
+            statusDiv.appendChild(div);
+            console.log(message);
+        }
+        
+        function addTestItems() {
+            const testItems = {
+                "1": { qty: 2, name: "pizza", price: 100.00, image: null },
+                "10": { qty: 1, name: "Caesar Salad", price: 12.99, image: null },
+                "11": { qty: 3, name: "Buffalo Wings", price: 14.99, image: null }
+            };
+            
+            const cartState = {
+                items: testItems,
+                tip: 0,
+                discount: 0,
+                delivery: "DINE_IN"
+            };
+            
+            localStorage.setItem(CART_V1_KEY, JSON.stringify(cartState));
+            log('✅ Test items added to cart_v1 localStorage!', 'success');
+        }
+        
+        function addTestItemsCartFormat() {
+            const testItems = [
+                { menu_item: 1, quantity: 2 },
+                { menu_item: 10, quantity: 1 },
+                { menu_item: 11, quantity: 3 }
+            ];
+            
+            localStorage.setItem(CART_KEY, JSON.stringify(testItems));
+            log('✅ Test items added to cart localStorage!', 'success');
+        }
+        
+        function checkAllCarts() {
+            log('<h3>Cart Data Analysis:</h3>', 'info');
+            
+            // Check cart_v1
+            const cartV1Data = localStorage.getItem(CART_V1_KEY);
+            if (cartV1Data) {
+                try {
+                    const cart = JSON.parse(cartV1Data);
+                    log(`<strong>cart_v1:</strong><pre>${JSON.stringify(cart, null, 2)}</pre>`, 'success');
+                } catch (e) {
+                    log(`❌ Error parsing cart_v1: ${e.message}`, 'error');
+                }
+            } else {
+                log('⚠️ No cart_v1 data found', 'error');
+            }
+            
+            // Check cart
+            const cartData = localStorage.getItem(CART_KEY);
+            if (cartData) {
+                try {
+                    const cart = JSON.parse(cartData);
+                    log(`<strong>cart:</strong><pre>${JSON.stringify(cart, null, 2)}</pre>`, 'success');
+                } catch (e) {
+                    log(`❌ Error parsing cart: ${e.message}`, 'error');
+                }
+            } else {
+                log('⚠️ No cart data found', 'error');
+            }
+        }
+        
+        function clearAllCarts() {
+            localStorage.removeItem(CART_V1_KEY);
+            localStorage.removeItem(CART_KEY);
+            log('🗑️ All cart data cleared!', 'info');
+        }
+        
+        async function testCartApiGet() {
+            try {
+                // Test the server API directly
+                const response = await fetch('/api/orders/cart-simple/', { credentials: 'include' });
+                const serverData = await response.json();
+                log(`<strong>Server API Response:</strong><pre>${JSON.stringify(serverData, null, 2)}</pre>`, 'info');
+                
+                // Test if cartApiGet function exists and works
+                if (typeof window.cartApiGet === 'function') {
+                    const cartApiData = await window.cartApiGet();
+                    log(`<strong>cartApiGet() Result:</strong><pre>${JSON.stringify(cartApiData, null, 2)}</pre>`, 'success');
+                } else {
+                    log('❌ cartApiGet function not found on window object', 'error');
+                }
+            } catch (e) {
+                log(`❌ Error testing cartApiGet: ${e.message}`, 'error');
+            }
+        }
+        
+        function goToCart() {
+            window.location.href = '/cart/';
+        }
+        
+        // Auto-setup on page load
+        window.addEventListener('load', function() {
+            log('🔧 Cart Debug Tool Loaded', 'info');
+            addTestItems();
+            setTimeout(() => {
+                checkAllCarts();
+            }, 500);
+        });
+    </script>
+</body>
+</html>

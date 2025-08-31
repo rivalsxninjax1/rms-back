@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cart Debug</title>
+</head>
+<body>
+    <h1>Cart Debug Tool</h1>
+    <div id="debug-output"></div>
+    <button onclick="debugCart()">Debug Cart System</button>
+    
+    <script>
+        async function debugCart() {
+            const output = document.getElementById('debug-output');
+            let html = '<h2>Debug Results:</h2>';
+            
+            // Check localStorage
+            html += '<h3>LocalStorage:</h3>';
+            html += '<p>cart_v1: ' + (localStorage.getItem('cart_v1') || 'null') + '</p>';
+            html += '<p>cart: ' + (localStorage.getItem('cart') || 'null') + '</p>';
+            
+            // Check window.cartApiGet
+            html += '<h3>Window cartApiGet:</h3>';
+            html += '<p>Available: ' + (typeof window.cartApiGet === 'function') + '</p>';
+            
+            if (typeof window.cartApiGet === 'function') {
+                try {
+                    const cartData = await window.cartApiGet();
+                    html += '<p>Cart Data: ' + JSON.stringify(cartData, null, 2) + '</p>';
+                } catch (error) {
+                    html += '<p>Error calling cartApiGet: ' + error.message + '</p>';
+                }
+            }
+            
+            // Check API directly
+            html += '<h3>Direct API Call:</h3>';
+            try {
+                const response = await fetch('/api/orders/cart-simple/');
+                const apiData = await response.json();
+                html += '<p>API Response: ' + JSON.stringify(apiData, null, 2) + '</p>';
+            } catch (error) {
+                html += '<p>API Error: ' + error.message + '</p>';
+            }
+            
+            output.innerHTML = html;
+        }
+        
+        // Auto-run on load
+        window.addEventListener('load', () => {
+            setTimeout(debugCart, 1000);
+        });
+    </script>
+    
+    <!-- Load the same scripts as cart page -->
+    <script src="/static/storefront/auth-modal.js?v=2" defer></script>
+    <script src="/static/storefront/app.js?v=2" defer></script>
+    <script src="/static/storefront/cart.js?v=2" defer></script>
+    <script src="/static/storefront/cart-pay.js?v=2" defer></script>
+    <script src="/static/storefront/cart-render.js?v=2" defer></script>
+    <script src="/static/storefront/cart-extras.js?v=1" defer></script>
+</body>
+</html>

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend Cart Test</title>
+    <script>
+        // Test localStorage cart_v1 data
+        function testLocalStorage() {
+            console.log('=== Testing localStorage cart_v1 ===');
+            
+            // Clear existing data
+            localStorage.removeItem('cart_v1');
+            
+            // Add test data to localStorage
+            const testCart = {
+                items: {
+                    "1": {
+                        name: "Test Pizza",
+                        qty: 2,
+                        price: 15.99
+                    },
+                    "2": {
+                        name: "Test Salad", 
+                        qty: 1,
+                        price: 8.50
+                    }
+                }
+            };
+            
+            localStorage.setItem('cart_v1', JSON.stringify(testCart));
+            console.log('Added test data to localStorage cart_v1:', testCart);
+            
+            // Test reading it back
+            const stored = localStorage.getItem('cart_v1');
+            console.log('Retrieved from localStorage:', JSON.parse(stored));
+        }
+        
+        // Test cartApiGet function
+        async function testCartApiGet() {
+            console.log('=== Testing cartApiGet function ===');
+            
+            if (typeof window.cartApiGet === 'function') {
+                console.log('cartApiGet function exists');
+                try {
+                    const result = await window.cartApiGet();
+                    console.log('cartApiGet result:', result);
+                    
+                    if (result.items && result.items.length > 0) {
+                        console.log('✅ Cart has items:', result.items.length);
+                        result.items.forEach((item, index) => {
+                            console.log(`Item ${index + 1}:`, item);
+                        });
+                    } else {
+                        console.log('❌ Cart is empty or no items found');
+                    }
+                } catch (error) {
+                    console.error('Error calling cartApiGet:', error);
+                }
+            } else {
+                console.error('❌ cartApiGet function not found');
+                console.log('Available window properties with "cart":', 
+                    Object.keys(window).filter(k => k.toLowerCase().includes('cart')));
+            }
+        }
+        
+        // Test server API directly
+        async function testServerAPI() {
+            console.log('=== Testing server API directly ===');
+            
+            try {
+                const response = await fetch('/api/orders/cart-simple/', {
+                    credentials: 'include'
+                });
+                
+                console.log('Server response status:', response.status);
+                console.log('Server response headers:', [...response.headers.entries()]);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Server cart data:', data);
+                } else {
+                    console.error('Server response not ok:', response.statusText);
+                }
+            } catch (error) {
+                console.error('Error fetching from server:', error);
+            }
+        }
+        
+        // Run all tests
+        async function runAllTests() {
+            console.clear();
+            console.log('🧪 Starting Frontend Cart Tests');
+            console.log('================================');
+            
+            testLocalStorage();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            await testServerAPI();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            await testCartApiGet();
+            
+            console.log('\n🏁 Tests completed');
+        }
+        
+        // Wait for page load and other scripts
+        window.addEventListener('load', () => {
+            setTimeout(runAllTests, 1000);
+        });
+    </script>
+</head>
+<body>
+    <h1>Frontend Cart Test</h1>
+    <p>Check the browser console for test results.</p>
+    <button onclick="runAllTests()">Run Tests Again</button>
+    
+    <!-- Include the same scripts as the cart page -->
+    <script>
+        // Define cartApiGet globally (same as base.html)
+        window.cartApiGet = async function cartApiGet(){
+            // First try to get data from server
+            const r = await fetch("/api/orders/cart-simple/", { 
+                credentials: "include"
+            });
+            
+            let serverData = { items: [] };
+            if (r.ok) {
+                serverData = await r.json();
+            }
+            
+            // If server has no items, check localStorage cart_v1
+            if (!serverData.items || serverData.items.length === 0) {
+                try {
+                    const cartV1 = localStorage.getItem('cart_v1');
+                    if (cartV1) {
+                        const cart = JSON.parse(cartV1);
+                        if (cart.items && typeof cart.items === 'object') {
+                            // Convert cart_v1 format to expected format
+                            const items = Object.entries(cart.items).map(([id, item]) => ({
+                                id: parseInt(id),
+                                name: item.name || `Item ${id}`,
+                                quantity: item.qty || 0,
+                                unit_price: item.price || 0,
+                                line_total: (item.qty || 0) * (item.price || 0),
+                                total_unit_price: item.price || 0,
+                                modifier_price: 0,
+                                modifier_names: []
+                            }));
+                            
+                            return {
+                                items: items,
+                                subtotal: items.reduce((sum, item) => sum + (item.line_total || 0), 0).toFixed(2),
+                                meta: cart
+                            };
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error reading cart_v1 from localStorage:', e);
+                }
+            }
+            
+            return serverData;
+        }
+    </script>
+</body>
+</html>

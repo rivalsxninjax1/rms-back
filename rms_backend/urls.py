@@ -6,9 +6,13 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from orders.views import simple_cart_view
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    
+    # Direct cart endpoint to bypass DRF issues
+    path("api/orders/cart-simple/", simple_cart_view, name="cart-simple-direct"),
     
     # API Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),

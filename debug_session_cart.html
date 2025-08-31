@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Session Cart</title>
+</head>
+<body>
+    <h1>Debug Session Cart</h1>
+    <button onclick="addTestItem()">Add Test Item</button>
+    <button onclick="checkSession()">Check Session Cart</button>
+    <button onclick="checkLocalStorage()">Check localStorage</button>
+    <div id="output"></div>
+
+    <script src="/static/storefront/app.js"></script>
+    <script>
+        async function addTestItem() {
+            // Add a test item using cartApiAdd
+            await window.cartApiAdd(1, 1);
+            document.getElementById('output').innerHTML += '<p>Added test item with ID 1</p>';
+        }
+
+        async function checkSession() {
+            try {
+                const response = await fetch('/api/orders/cart-simple/', {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                document.getElementById('output').innerHTML += '<h3>Session Cart Data:</h3><pre>' + JSON.stringify(data, null, 2) + '</pre>';
+            } catch (error) {
+                document.getElementById('output').innerHTML += '<p>Error checking session: ' + error.message + '</p>';
+            }
+        }
+
+        async function checkLocalStorage() {
+            const cartV1 = localStorage.getItem('cart_v1');
+            document.getElementById('output').innerHTML += '<h3>localStorage cart_v1:</h3><pre>' + (cartV1 || 'null') + '</pre>';
+        }
+    </script>
+</body>
+</html>

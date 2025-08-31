@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Add Test Items to Cart</title>
+</head>
+<body>
+    <h1>Adding Test Items to localStorage...</h1>
+    <p id="status">Processing...</p>
+    
+    <script>
+        // Add test items to localStorage cart_v1
+        function addTestItems() {
+            const testCart = {
+                items: {
+                    "1": {
+                        name: "Test Pizza",
+                        qty: 2,
+                        price: 15.99
+                    },
+                    "2": {
+                        name: "Test Burger", 
+                        qty: 1,
+                        price: 12.50
+                    },
+                    "3": {
+                        name: "Test Salad",
+                        qty: 3,
+                        price: 8.75
+                    }
+                }
+            };
+            
+            // Clear any existing cart data
+            localStorage.removeItem('cart_v1');
+            localStorage.removeItem('cart');
+            
+            // Add new test data
+            localStorage.setItem('cart_v1', JSON.stringify(testCart));
+            
+            console.log('Added test cart to localStorage:', testCart);
+            
+            // Verify it was stored
+            const stored = localStorage.getItem('cart_v1');
+            const parsed = JSON.parse(stored);
+            
+            document.getElementById('status').innerHTML = `
+                <p>✅ Test items added to localStorage!</p>
+                <p>Items stored: ${Object.keys(parsed.items).length}</p>
+                <ul>
+                    ${Object.entries(parsed.items).map(([id, item]) => 
+                        `<li>${item.name} - Qty: ${item.qty} - Price: $${item.price}</li>`
+                    ).join('')}
+                </ul>
+                <p><strong>Now redirecting to cart page...</strong></p>
+            `;
+            
+            // Redirect to cart page after 2 seconds
+            setTimeout(() => {
+                window.location.href = '/cart/';
+            }, 2000);
+        }
+        
+        // Run when page loads
+        window.addEventListener('load', addTestItems);
+    </script>
+</body>
+</html>
