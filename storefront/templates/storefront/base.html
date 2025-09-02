@@ -23,6 +23,8 @@
     .price{font-weight:600}
     .qty{display:inline-flex;align-items:center;gap:8px}
     input[type='number'], select, input[type='text']{background:#14151d;border:1px solid #272a3b;border-radius:10px;color:#e7e9ee;padding:8px 10px}
+    .toast-wrap{position:fixed;right:16px;bottom:16px;z-index:1200;display:flex;flex-direction:column;gap:8px}
+    .toast{background:#171925;border:1px solid #2a2d3d;color:#e7e9ee;border-radius:10px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.35);opacity:.98}
   </style>
   {% block head %}{% endblock %}
 </head>
@@ -55,6 +57,9 @@
       <div class="inner" style="display:none"></div>
     {% endif %}
   </div>
+
+  <!-- Toasts -->
+  <div id="toastWrap" class="toast-wrap" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Auth Modal -->
   <div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1100;align-items:center;justify-content:center">
@@ -105,10 +110,21 @@
           if (data.options){ const el = document.getElementById('orderOptions'); if (el) el.innerHTML = data.options; }
           if (data.bar){ const el = document.getElementById('cartbar'); if (el) el.innerHTML = data.bar; }
           if (data.table_modal){ const el = document.getElementById('tableModalContent'); if (el){ el.innerHTML = data.table_modal; openTableModal?.(); } }
+          if (url.includes('/cart/add/')){ showToast('Added to cart'); }
         }
       } catch(e){ console.warn('Form submit failed', e); }
       refreshCart();
       return false;
+    }
+    function showToast(msg){
+      try{
+        const wrap = document.getElementById('toastWrap');
+        const el = document.createElement('div');
+        el.className = 'toast';
+        el.textContent = msg;
+        wrap.appendChild(el);
+        setTimeout(()=>{ el.style.opacity = '0'; el.style.transition='opacity .3s'; setTimeout(()=>el.remove(), 350); }, 1600);
+      }catch(e){ /* noop */ }
     }
     // Delegate all .js-ajax forms to handleCartForm
     document.addEventListener('submit', function(ev){

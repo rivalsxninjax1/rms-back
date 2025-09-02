@@ -1,6 +1,0 @@
-{% if cart.items.count %}
-  <div class="inner">
-    <span>{{ cart.items.count }} item{{ cart.items.count|pluralize }} · <strong>₹ {{ cart.total }}</strong></span>
-    <a class="btn" href="{% url 'storefront:cart_full' %}">View Full Cart</a>
-  </div>
-{% endif %}

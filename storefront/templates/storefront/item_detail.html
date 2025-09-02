@@ -60,8 +60,9 @@
       const fd = new FormData(form);
       try{
         const res = await fetch(url, { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: fd });
-        const data = await res.json();
-        if (data.bar){ document.getElementById('cartbar').innerHTML = data.bar; }
+        const ct = res.headers.get('content-type')||''; const data = ct.includes('application/json') ? await res.json().catch(()=>null) : null;
+        if (data && data.bar){ document.getElementById('cartbar').innerHTML = data.bar; }
+        if (typeof showToast === 'function'){ showToast('Added to cart'); }
       } catch(e){ console.error(e); }
       refreshCart();
       return false;
