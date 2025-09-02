@@ -1,0 +1,307 @@
+{% if show_debug %}
+<div class="cache-debug-panel">
+    <div class="debug-header">
+        <h4><i class="fas fa-database"></i> Cache Debug Info</h4>
+        <button class="toggle-debug" onclick="toggleCacheDebug()">
+            <i class="fas fa-chevron-down"></i>
+        </button>
+    </div>
+    
+    <div class="debug-content" id="cache-debug-content">
+        <div class="debug-stats">
+            <div class="stat-item">
+                <span class="stat-label">Cache Backend:</span>
+                <span class="stat-value">{{ cache_stats.backend|default:"Unknown" }}</span>
+            </div>
+            
+            <div class="stat-item">
+                <span class="stat-label">Total Keys:</span>
+                <span class="stat-value">{{ cache_stats.total_keys|default:"N/A" }}</span>
+            </div>
+            
+            <div class="stat-item">
+                <span class="stat-label">Memory Usage:</span>
+                <span class="stat-value">{{ cache_stats.memory_usage|default:"N/A" }}</span>
+            </div>
+            
+            <div class="stat-item">
+                <span class="stat-label">Hit Rate:</span>
+                <span class="stat-value">{{ cache_stats.hit_rate|default:"N/A" }}%</span>
+            </div>
+        </div>
+        
+        {% if cache_stats.recent_keys %}
+        <div class="debug-section">
+            <h5>Recent Cache Keys</h5>
+            <div class="cache-keys">
+                {% for key in cache_stats.recent_keys %}
+                <div class="cache-key">
+                    <code>{{ key }}</code>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <div class="debug-actions">
+            <button class="btn btn-sm btn-warning" onclick="clearCache('menu')">
+                <i class="fas fa-trash"></i> Clear Menu Cache
+            </button>
+            
+            <button class="btn btn-sm btn-warning" onclick="clearCache('user')">
+                <i class="fas fa-trash"></i> Clear User Cache
+            </button>
+            
+            <button class="btn btn-sm btn-danger" onclick="clearCache('all')">
+                <i class="fas fa-exclamation-triangle"></i> Clear All Cache
+            </button>
+            
+            <button class="btn btn-sm btn-info" onclick="refreshCacheStats()">
+                <i class="fas fa-sync"></i> Refresh Stats
+            </button>
+        </div>
+        
+        <div class="debug-info">
+            <small class="text-muted">
+                <i class="fas fa-info-circle"></i>
+                Cache debug panel is only visible in DEBUG mode.
+                Current time: <span id="debug-timestamp">{{ "now"|date:"Y-m-d H:i:s" }}</span>
+            </small>
+        </div>
+    </div>
+</div>
+
+<style>
+.cache-debug-panel {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 350px;
+    background: rgba(0, 0, 0, 0.9);
+    color: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    z-index: 9999;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 12px;
+}
+
+.debug-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px 8px 0 0;
+    cursor: pointer;
+}
+
+.debug-header h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.toggle-debug {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+.toggle-debug:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.debug-content {
+    padding: 16px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.debug-content.collapsed {
+    display: none;
+}
+
+.debug-stats {
+    margin-bottom: 16px;
+}
+
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.stat-label {
+    color: #ccc;
+}
+
+.stat-value {
+    color: #4CAF50;
+    font-weight: 600;
+}
+
+.debug-section {
+    margin-bottom: 16px;
+}
+
+.debug-section h5 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    color: #ffd700;
+}
+
+.cache-keys {
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.cache-key {
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    margin-bottom: 4px;
+}
+
+.cache-key code {
+    color: #87CEEB;
+    font-size: 11px;
+    word-break: break-all;
+}
+
+.debug-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.btn-sm {
+    padding: 6px 10px;
+    font-size: 11px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-warning {
+    background: #ff9800;
+    color: white;
+}
+
+.btn-warning:hover {
+    background: #f57c00;
+}
+
+.btn-danger {
+    background: #f44336;
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #d32f2f;
+}
+
+.btn-info {
+    background: #2196F3;
+    color: white;
+}
+
+.btn-info:hover {
+    background: #1976D2;
+}
+
+.debug-info {
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.text-muted {
+    color: #999;
+}
+
+@media (max-width: 768px) {
+    .cache-debug-panel {
+        width: calc(100vw - 40px);
+        right: 20px;
+        left: 20px;
+    }
+}
+</style>
+
+<script>
+function toggleCacheDebug() {
+    const content = document.getElementById('cache-debug-content');
+    const toggle = document.querySelector('.toggle-debug i');
+    
+    if (content.classList.contains('collapsed')) {
+        content.classList.remove('collapsed');
+        toggle.className = 'fas fa-chevron-down';
+    } else {
+        content.classList.add('collapsed');
+        toggle.className = 'fas fa-chevron-right';
+    }
+}
+
+function clearCache(type) {
+    if (!confirm(`Are you sure you want to clear ${type} cache?`)) {
+        return;
+    }
+    
+    fetch('/api/admin/cache/clear/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ type: type })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(`${type} cache cleared successfully`);
+            refreshCacheStats();
+        } else {
+            alert('Failed to clear cache: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('Failed to clear cache');
+    });
+}
+
+function refreshCacheStats() {
+    location.reload();
+}
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Update timestamp every second
+setInterval(() => {
+    const timestamp = document.getElementById('debug-timestamp');
+    if (timestamp) {
+        timestamp.textContent = new Date().toLocaleString();
+    }
+}, 1000);
+</script>
+{% endif %}

@@ -1,17 +1,19 @@
-# FILE: orders/urls.py
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from .api_views import CartViewSet, OrderViewSet, OrderItemViewSet
 
-from .views import OrderViewSet, SessionCartViewSet, simple_cart_view, cart_expiration_view
-from .views_my import MyOrdersAPIView
-
+# Create router and register viewsets
 router = DefaultRouter()
-router.register(r"orders", OrderViewSet, basename="orders")
-router.register(r"cart", SessionCartViewSet, basename="cart")
+router.register(r'carts', CartViewSet, basename='cart')
+router.register(r'orders', OrderViewSet, basename='order')
+router.register(r'order-items', OrderItemViewSet, basename='orderitem')
 
+# URL patterns
 urlpatterns = [
-    path("cart-simple/", simple_cart_view, name="cart-simple"),
-    path("cart-expired/", cart_expiration_view, name="cart-expired"),
-    path("", include(router.urls)),
-    path("orders/my/", MyOrdersAPIView.as_view(), name="orders-my"),
+    path('', include(router.urls)),
 ]
+
+# Additional custom endpoints can be added here if needed
+# urlpatterns += [
+#     path('api/custom-endpoint/', custom_view, name='custom-endpoint'),
+# ]

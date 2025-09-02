@@ -1,6 +1,6 @@
 /* storefront/static/storefront/auth-modal.js - Fixed Session Auth */
 (function () {
-  const $ = (sel, el=document) => el.querySelector(sel);
+  // $ utility is now available from utils.js
   const modal = $("#auth-modal");
   const stepChoice = $("#auth-step-choice");
   const stepLogin = $("#auth-step-login");
@@ -39,6 +39,10 @@
   linkToLogin?.addEventListener("click", (e) => { e.preventDefault(); show("login"); });
   linkToSignup?.addEventListener("click", (e) => { e.preventDefault(); show("signup"); });
   btnClose?.addEventListener("click", closeModal);
+  
+  // Navigation login button
+  const navLogin = $("#nav-login");
+  navLogin?.addEventListener("click", (e) => { e.preventDefault(); openModal("choice"); });
 
   function setBusy(el, busy){ 
     if(!el) return; 

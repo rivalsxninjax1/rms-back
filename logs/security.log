@@ -1,0 +1,4 @@
+WARNING 2025-09-02 09:10:11,686 log 53579 6138294272 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header has incorrect length.): /accounts/login/
+WARNING 2025-09-02 09:10:32,650 log 53579 6155120640 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header has incorrect length.): /accounts/register/
+WARNING 2025-09-02 09:16:58,254 log 53579 6138294272 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header has incorrect length.): /accounts/register/
+WARNING 2025-09-02 12:34:08,652 log 15126 6197899264 Forbidden (CSRF token from POST has incorrect length.): /admin/login/

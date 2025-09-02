@@ -14,18 +14,10 @@
     localStorage.setItem("cart", JSON.stringify(items));
   }
 
+  // Cart sync no longer needed with database-backed cart
   async function syncWithServer(items) {
-    try {
-      const res = await fetch("/api/cart/sync/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken },
-        body: JSON.stringify({ items })
-      });
-      return await res.json();
-    } catch (e) {
-      console.error("Cart sync failed", e);
-      return { items };
-    }
+    // Return items as-is since sync is handled by the database cart
+    return { items };
   }
 
   function normalizeItem(it) {

@@ -99,14 +99,11 @@ class OrderAdmin(admin.ModelAdmin):
         "id",
         "user",
         "delivery_option",
-        "dine_in_table",   # FK field exists; also present table_ref() for a friendly link
-        "table_ref",
         "status",
         "items_subtotal_admin",
         "tip_amount",
         "discount_amount",
         "grand_total_admin",
-        "currency",
         "created_at",
         "invoice_link",
     )

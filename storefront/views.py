@@ -1,715 +1,545 @@
+# rms-back/storefront/views.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import timedelta
 
-from django.contrib.auth.decorators import login_required
-from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import redirect, render
-from django.utils.decorators import method_decorator
-from django.views import View
+from django.conf import settings
+from django.db import transaction
+from django.http import HttpRequest, HttpResponse, JsonResponse, HttpResponseBadRequest, HttpResponseRedirect
+from django.urls import reverse
+from django.shortcuts import render, get_object_or_404
+from django.template.loader import render_to_string
+from django.utils import timezone
+from django.views.decorators.http import require_GET, require_POST
 
-# -----------------------------------------------------------------------------
-# Helpers
-# -----------------------------------------------------------------------------
+from menu.models import MenuItem, MenuCategory, Modifier, ModifierGroup
+from core.models import Table, Organization, Location
+from orders.models import Cart, CartItem, Order
+from orders.utils.cart import get_or_create_cart
+from coupons.services import find_active_coupon, compute_discount_for_order
+from payments.services import create_checkout_session
+from core.seed import seed_default_tables
 
-def _ctx(section: str, request: Optional[HttpRequest] = None, **extra: Any) -> Dict[str, Any]:
+def _to_cents(amount):
+    d = Decimal(str(amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return int((d * 100).to_integral_value(rounding=ROUND_HALF_UP))
+
+def _touch_expiration(cart: Cart) -> None:
+    cart.set_expiration(minutes=25)
+    cart.save(update_fields=["expires_at", "updated_at", "last_activity"])
+
+def _cart_or_404(request: HttpRequest) -> Cart:
+    result = get_or_create_cart(request)
+    cart = result.cart
+    _touch_expiration(cart)
+    return cart
+
+def _is_htmx(request: HttpRequest) -> bool:
+    # Treat both HTMX and classic AJAX (XMLHttpRequest) as JSON clients
+    if request.headers.get('HX-Request', '').lower() == 'true':
+        return True
+    xr = request.headers.get('X-Requested-With', '')
+    return xr.lower() == 'xmlhttprequest'
+
+
+def _ensure_min_tables(min_tables: int = 6) -> None:
+    """If there are no tables in RMS admin, seed a sensible default set.
+    This is a development convenience to avoid empty dine-in flows.
+    Idempotent: only seeds when Table count is zero.
     """
-    Common template context used across storefront pages.
-    """
-    user = getattr(request, "user", None)
-    return {
-        "section": section,
-        "is_auth": bool(user and user.is_authenticated),
-        "user": user,
-        # Delivery deep links (read by the frontend to open popups)
-        "UBEREATS_ORDER_URL": getattr(__import__("django.conf").conf.settings, "UBEREATS_ORDER_URL", ""),
-        "DOORDASH_ORDER_URL": getattr(__import__("django.conf").conf.settings, "DOORDASH_ORDER_URL", ""),
-        **extra,
-    }
-
-
-# -----------------------------------------------------------------------------
-# Page Views (names kept to match original urls.py from ZIP)
-# -----------------------------------------------------------------------------
-
-def home(request: HttpRequest) -> HttpResponse:
-    return render(request, "storefront/index.html", _ctx("home", request))
-
-
-def about(request: HttpRequest) -> HttpResponse:
-    return render(request, "storefront/about.html", _ctx("about", request))
-
-
-def branches(request: HttpRequest) -> HttpResponse:
-    return render(request, "storefront/branches.html", _ctx("branches", request))
-
-
-class MenuItemsView(View):
-    """
-    Menu landing page that loads all menu items from the database.
-    """
-    template_name = "storefront/menu.html"
-
-    def get(self, request: HttpRequest) -> HttpResponse:
-        from menu.models import MenuItem, MenuCategory
-        
-        # Fetch all available menu items with their categories
-        items = MenuItem.objects.filter(is_available=True).select_related('category', 'organization').order_by('sort_order', 'name')
-        categories = MenuCategory.objects.filter(is_active=True).select_related('organization').order_by('sort_order', 'name')
-        
-        context = _ctx("menu", request)
-        context.update({
-            'items': items,
-            'categories': categories,
-            'DEFAULT_CURRENCY': 'NPR',  # Add default currency
-        })
-        
-        return render(request, self.template_name, context)
-
-
-def menu_item(request: HttpRequest, item_id: int) -> HttpResponse:
-    """
-    Menu item detail page - fetches actual item from database.
-    """
-    from menu.models import MenuItem
-    from django.shortcuts import get_object_or_404
-    
     try:
-        item = get_object_or_404(MenuItem, id=item_id, is_available=True)
-        context = _ctx("menu-item", request, item_id=item_id)
-        context.update({
-            'item': item,
-            'DEFAULT_CURRENCY': 'NPR',
-        })
-        return render(request, "storefront/menu_item.html", context)
-    except Exception as e:
-        # If item not found, redirect to menu
-        return redirect("storefront:menu")
-
-
-def cart(request: HttpRequest) -> HttpResponse:
-    return render(request, "storefront/cart.html", _ctx("cart", request))
-
-
-@method_decorator(login_required, name="dispatch")
-def checkout(request: HttpRequest) -> HttpResponse:
-    """
-    Checkout shell; pressing 'Pay' triggers JS → /payments/checkout/ POST.
-    Login is required for Stripe payments.
-    """
-    return render(request, "storefront/checkout.html", _ctx("checkout", request))
-
-
-def orders(request: HttpRequest) -> HttpResponse:
-    """
-    Backwards-compat alias that redirects to /my-orders/ (kept from old code).
-    """
-    return redirect("storefront:my_orders")
-
-
-@method_decorator(login_required, name="dispatch")
-class MyOrdersView(View):
-    """
-    Authenticated user orders page; JS loads order history via API.
-    """
-    template_name = "storefront/my_orders.html"
-
-    def get(self, request: HttpRequest) -> HttpResponse:
-        return render(request, self.template_name, _ctx("orders", request))
-
-
-def contact(request: HttpRequest) -> HttpResponse:
-    return render(request, "storefront/contact.html", _ctx("contact", request))
-
-
-def login_page(request: HttpRequest) -> HttpResponse:
-    """
-    Renders a login/register shell (the actual auth is JSON via accounts.urls).
-    """
-    return render(request, "storefront/login.html", _ctx("login", request))
-
-
-def reservations(request: HttpRequest) -> HttpResponse:
-    """
-    Reservation flow entry; page renders a calendar/table shell.
-    JS hits /api/reservations/... endpoints to check availability and create.
-    """
-    # Provide any soft hints you want in the UI (non-critical)
-    upcoming = request.session.get("sf_upcoming_reservations", []) or []
-    recent = request.session.get("sf_recent_reservations", []) or []
-    return render(
-        request,
-        "storefront/reservations.html",
-        _ctx("reservations", request, upcoming=upcoming, recent=recent),
-    )
-
-
-# -----------------------------------------------------------------------------
-# Small JSON endpoints used by legacy templates/JS
-# -----------------------------------------------------------------------------
-
-def api_cart_set_tip(request: HttpRequest) -> JsonResponse:
-    """
-    Kept for backward compatibility: store a fixed tip in the session so the
-    server can read it during payment if needed. New flow uses localStorage.
-    """
-    if request.method != "POST":
-        return JsonResponse({"detail": "Method not allowed."}, status=405)
-    try:
-        import json
-        body = json.loads(request.body.decode("utf-8"))
-        tip = float(body.get("tip") or 0)
+        if Table.objects.exists():
+            return
+        # Create a default organization and location
+        org, _ = Organization.objects.get_or_create(name="Default Organization")
+        loc, _ = Location.objects.get_or_create(organization=org, name="Main")
+        # Seed tables: A1..A6 (or min_tables)
+        import string
+        letters = ["A", "B"]
+        created = 0
+        for letter in letters:
+            for num in range(1, min_tables + 1):
+                if created >= min_tables:
+                    break
+                Table.objects.get_or_create(
+                    location=loc,
+                    table_number=f"{letter}{num}",
+                    defaults={"capacity": 4, "is_active": True, "table_type": "dining"},
+                )
+                created += 1
     except Exception:
-        tip = 0.0
-    request.session["sf_tip_fixed"] = max(0.0, tip)
-    return JsonResponse({"ok": True, "tip": request.session["sf_tip_fixed"]})
+        # If seeding fails, silently ignore; UI will just show no tables
+        pass
 
+@require_GET
+def menu_list(request: HttpRequest) -> HttpResponse:
+    categories = MenuCategory.objects.filter(is_active=True).order_by("sort_order", "name")
+    items = (
+        MenuItem.objects.filter(is_available=True)
+        .select_related("category")
+        .order_by("sort_order", "name")[:200]
+    )
+    cart = _cart_or_404(request)
+    return render(request, "storefront/menu_list.html", {"categories": categories, "items": items, "cart": cart})
 
-# -----------------------------------------------------------------------------
-# Error handlers wired in root urls
-# -----------------------------------------------------------------------------
+@require_GET
+def item_detail(request: HttpRequest, slug: str) -> HttpResponse:
+    item = get_object_or_404(MenuItem.objects.select_related("category"), slug=slug, is_available=True)
+    cart = _cart_or_404(request)
+    groups = (
+        ModifierGroup.objects.filter(menu_item=item, is_active=True)
+        .prefetch_related("modifiers")
+        .order_by("name")
+    )
+    return render(request, "storefront/item_detail.html", {"item": item, "groups": groups, "cart": cart})
 
-def http_400(request: HttpRequest, exception=None) -> HttpResponse:  # pragma: no cover
-    return render(request, "storefront/errors/400.html", _ctx("error", request), status=400)
+@require_GET
+def cart_bar(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    return render(request, "storefront/_cart_bar.html", {"cart": cart})
 
-
-def http_403(request: HttpRequest, exception=None) -> HttpResponse:  # pragma: no cover
-    return render(request, "storefront/errors/403.html", _ctx("error", request), status=403)
-
-
-def http_404(request: HttpRequest, exception=None) -> HttpResponse:  # pragma: no cover
-    return render(request, "storefront/errors/404.html", _ctx("error", request), status=404)
-
-
-def http_500(request: HttpRequest) -> HttpResponse:  # pragma: no cover
-    return render(request, "storefront/500.html", status=500)
-
-
-def test_cart_debug(request: HttpRequest) -> HttpResponse:
-    """Serve test HTML files for cart debugging"""
-    import os
-    from django.conf import settings
-    
-    # Get the test file name from URL parameter
-    test_file = request.GET.get('file', 'add_test_items')
-    
-    # Read the HTML file from the project root
-    file_path = os.path.join(settings.BASE_DIR, f"{test_file}.html")
-    
+@require_GET
+def cart_full(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    _ensure_min_tables()
+    now = timezone.now()
+    in_two = now + timedelta(hours=2)
+    # Show all active tables; mark reserved separately so UI can disable/select accordingly
+    tables = Table.objects.filter(is_active=True).order_by("location_id", "table_number")
+    sel_ids = []
+    if cart.table_id:
+        sel_ids.append(cart.table_id)
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        return HttpResponse(content, content_type='text/html')
-    except FileNotFoundError:
-        return HttpResponse(f"Test file {test_file}.html not found", status=404)
+        if isinstance(cart.metadata, dict):
+            extra = cart.metadata.get("tables") or []
+            for tid in extra:
+                if isinstance(tid, int) and tid not in sel_ids:
+                    sel_ids.append(tid)
+    except Exception:
+        pass
+    # Compute reserved ids in the next 2 hours
+    try:
+        from reservations.models import Reservation
+        active_status = ["pending", "confirmed"]
+        reserved_ids = set(
+            Reservation.objects.filter(
+                status__in=active_status,
+                start_time__lt=in_two,
+                end_time__gt=now,
+            ).values_list("table_id", flat=True)
+        )
+    except Exception:
+        reserved_ids = set()
+    return render(request, "storefront/cart_full.html", {"cart": cart, "tables": tables, "sel_table_ids": sel_ids, "reserved_ids": reserved_ids})
+
+@require_POST
+@transaction.atomic
+def cart_add(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    menu_id = request.POST.get("menu_id")
+    qty = int(request.POST.get("qty", "1"))
+    if not menu_id:
+        return HttpResponseBadRequest("Missing menu_id")
+
+    item = get_object_or_404(MenuItem, pk=menu_id, is_available=True)
+    modifier_ids = [int(x) for x in request.POST.get("modifiers", "").split(",") if x.strip().isdigit()]
+    valid_mods = list(Modifier.objects.filter(id__in=modifier_ids, is_available=True))
+    selected_mods = sorted([
+        {"modifier_id": m.id, "quantity": 1} for m in valid_mods
+    ], key=lambda d: d["modifier_id"])
+
+    line = CartItem.objects.filter(cart=cart, menu_item=item, selected_modifiers=selected_mods).first()
+    if line:
+        line.quantity = line.quantity + max(1, qty)
+        line.save(update_fields=["quantity", "updated_at"])
+    else:
+        CartItem.objects.create(
+            cart=cart,
+            menu_item=item,
+            quantity=max(1, qty),
+            unit_price=item.price,
+            selected_modifiers=selected_mods,
+        )
+
+    cart.calculate_totals(); cart.save()
+    if _is_htmx(request):
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "bar": html_bar})
+    # Simple HTML: redirect back to menu (or referrer) so page renders normally
+    return HttpResponseRedirect(request.META.get('HTTP_REFERER') or reverse('storefront:menu_list'))
+
+@require_POST
+@transaction.atomic
+def cart_update(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    line_id = request.POST.get("line_id")
+    try:
+        delta = int(request.POST.get("delta", "0"))
+    except Exception:
+        delta = 0
+    if not line_id or delta == 0:
+        return HttpResponseBadRequest("Missing line_id or delta")
+    # Be resilient: if the line is missing, just refresh cart instead of 404
+    line = CartItem.objects.filter(pk=line_id, cart=cart).first()
+    if line:
+        new_qty = max(0, int(line.quantity) + delta)
+        if new_qty == 0:
+            line.delete()
+        else:
+            line.quantity = new_qty
+            line.save(update_fields=["quantity", "updated_at"])
+    # Always recalc and return current cart snapshot
+    cart.calculate_totals(); cart.save()
+    if _is_htmx(request):
+        html_cart = render_to_string("storefront/_cart_items.html", {"cart": cart}, request=request)
+        html_totals = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "cart": html_cart, "totals": html_totals, "bar": html_bar})
+    return HttpResponseRedirect(reverse('storefront:cart_full'))
+
+@require_POST
+@transaction.atomic
+def cart_remove(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    line_id = request.POST.get("line_id")
+    if not line_id:
+        return HttpResponseBadRequest("Missing line_id")
+    # Resilient remove: if not found, treat as already removed
+    line = CartItem.objects.filter(pk=line_id, cart=cart).first()
+    if line:
+        line.delete()
+    cart.calculate_totals(); cart.save()
+    if _is_htmx(request):
+        html_cart = render_to_string("storefront/_cart_items.html", {"cart": cart}, request=request)
+        html_totals = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "cart": html_cart, "totals": html_totals, "bar": html_bar})
+    return HttpResponseRedirect(reverse('storefront:cart_full'))
+
+@require_POST
+@transaction.atomic
+def cart_option(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    order_type = (request.POST.get("order_type") or "").upper()
+    table_id = request.POST.get("table_id")
+
+    if order_type not in {"DINE_IN", "TAKEAWAY", "UBEREATS", "DOORDASH"}:
+        return HttpResponseBadRequest("Invalid order_type")
+
+    # Determine requested option but don't violate DB constraints
+    requested_option = order_type
+    if requested_option == "DINE_IN":
+        # If no table provided, just render options with DINE_IN selected (no save)
+        if not (request.POST.getlist("table_ids") or request.POST.get("table_id")):
+            now = timezone.now()
+            in_two = now + timedelta(hours=2)
+            _ensure_min_tables()
+            tables = Table.objects.filter(is_active=True).order_by("location_id", "table_number")
+            sel_ids = []
+            if cart.table_id:
+                sel_ids.append(cart.table_id)
+            if isinstance(cart.metadata, dict):
+                for tid in (cart.metadata.get("tables") or []):
+                    if isinstance(tid, int) and tid not in sel_ids:
+                        sel_ids.append(tid)
+            if _is_htmx(request):
+                html_opts = render_to_string(
+                    "storefront/_order_options.html",
+                    {"cart": cart, "tables": tables, "sel_table_ids": sel_ids, "sel_override": "DINE_IN"},
+                    request=request,
+                )
+                table_modal = render_to_string(
+                    "storefront/_table_modal.html",
+                    {"cart": cart, "tables": tables, "sel_table_ids": sel_ids},
+                    request=request,
+                )
+                html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+                return JsonResponse({"ok": True, "options": html_opts, "bar": html_bar, "table_modal": table_modal})
+            return HttpResponseRedirect(reverse('storefront:cart_full'))
+        # We have table(s); safe to persist DINE_IN
+        cart.delivery_option = Cart.DELIVERY_DINE_IN
+    elif requested_option == "TAKEAWAY":
+        cart.delivery_option = Cart.DELIVERY_PICKUP
+    else:
+        cart.delivery_option = Cart.DELIVERY_DELIVERY
+
+    meta = cart.metadata or {}
+    meta["provider"] = None
+    if order_type in {"UBEREATS", "DOORDASH"}:
+        meta["provider"] = order_type
+
+    # Handle single or multiple table selection
+    table_ids_raw = request.POST.getlist("table_ids") or []
+    if not table_ids_raw:
+        ids_csv = request.POST.get("table_ids", "").strip()
+        if ids_csv:
+            table_ids_raw = [x for x in ids_csv.split(",") if x]
+    table_ids: list[int] = []
+    for x in table_ids_raw:
+        try:
+            table_ids.append(int(x))
+        except Exception:
+            continue
+    if cart.delivery_option == Cart.DELIVERY_DINE_IN:
+        # Allow switching to Dine-in without forcing a table immediately; apply table(s) only if provided
+        if table_ids or table_id:
+            primary_id = None
+            if table_ids:
+                primary_id = table_ids[0]
+            elif table_id:
+                primary_id = int(table_id)
+            table = get_object_or_404(Table, pk=primary_id)
+            cart.table = table
+            # Persist all selected tables in metadata
+            sel_list = table_ids if table_ids else ([primary_id] if primary_id else [])
+            meta["tables"] = sel_list
+    else:
+        cart.table = None
+        meta.pop("tables", None)
+
+    # Apply platform service fees if configured
+    service_fee = Decimal("0.00")
+    if meta.get("provider") == "UBEREATS":
+        try:
+            fee = getattr(settings, "UBEREATS_FEE", 0) or 0
+            service_fee = Decimal(str(fee))
+        except Exception:
+            service_fee = Decimal("0.00")
+    elif meta.get("provider") == "DOORDASH":
+        try:
+            fee = getattr(settings, "DOORDASH_FEE", 0) or 0
+            service_fee = Decimal(str(fee))
+        except Exception:
+            service_fee = Decimal("0.00")
+
+    cart.service_fee = service_fee
+    cart.metadata = meta
+    cart.calculate_totals(); cart.save(update_fields=[
+        "delivery_option", "table", "metadata", "service_fee",
+        "subtotal", "modifier_total", "tax_amount", "total", "updated_at"
+    ])
+    # Recompute available tables for rendering
+    now = timezone.now()
+    in_two = now + timedelta(hours=2)
+    tables = Table.objects.filter(is_active=True).exclude(
+        reservations__start_time__lt=in_two, reservations__end_time__gt=now
+    ).order_by("location_id", "table_number")
+    sel_ids = []
+    if cart.table_id:
+        sel_ids.append(cart.table_id)
+    if isinstance(cart.metadata, dict):
+        for tid in (cart.metadata.get("tables") or []):
+            if isinstance(tid, int) and tid not in sel_ids:
+                sel_ids.append(tid)
+    if _is_htmx(request):
+        html_opts = render_to_string("storefront/_order_options.html", {"cart": cart, "tables": tables, "sel_table_ids": sel_ids}, request=request)
+        html_totals = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "options": html_opts, "totals": html_totals, "bar": html_bar})
+    return HttpResponseRedirect(reverse('storefront:cart_full'))
+
+@require_POST
+@transaction.atomic
+def cart_tip(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    amount_raw = request.POST.get("amount", "0")
+    try:
+        tip = Decimal(str(amount_raw or "0")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except Exception:
+        return HttpResponseBadRequest("Invalid tip")
+    if tip < 0:
+        return HttpResponseBadRequest("Tip must be >= 0")
+    cart.tip_amount = tip
+    cart.tip_percentage = None
+    cart.calculate_totals(); cart.save(update_fields=["tip_amount", "tip_percentage", "subtotal", "total", "updated_at"])
+    if _is_htmx(request):
+        html_cart = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "totals": html_cart, "bar": html_bar})
+    return HttpResponseRedirect(reverse('storefront:cart_full'))
+
+@require_POST
+@transaction.atomic
+def cart_checkout(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    if hasattr(cart, "is_expired") and cart.is_expired():
+        return JsonResponse({"ok": False, "error": "Your cart has expired. Please rebuild your order."}, status=409)
+    if cart.delivery_option == Cart.DELIVERY_DINE_IN and not cart.table_id:
+        return JsonResponse({"ok": False, "error": "Please select a table for dine-in."}, status=400)
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return JsonResponse({"ok": False, "auth_required": True}, status=401)
+
+    cart.calculate_totals(); cart.save()
+    order = Order.create_from_cart(cart)
+    session = create_checkout_session(order)
+    return JsonResponse({"ok": True, "redirect_url": session.get("url", "")})
+
+@require_POST
+@transaction.atomic
+def cart_clear(request: HttpRequest) -> HttpResponse:
+    cart = _cart_or_404(request)
+    for it in cart.items.all():
+        it.delete()
+    cart.calculate_totals(); cart.save()
+    if _is_htmx(request):
+        html_cart = render_to_string("storefront/_cart_items.html", {"cart": cart}, request=request)
+        html_totals = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "cart": html_cart, "totals": html_totals, "bar": html_bar})
+    return HttpResponseRedirect(reverse('storefront:cart_full'))
 
 
-def debug_cart(request: HttpRequest) -> HttpResponse:
-    """Debug cart rendering with proper Django template"""
-    return render(request, 'storefront/debug_cart.html')
+@require_POST
+@transaction.atomic
+def cart_extras(request: HttpRequest) -> HttpResponse:
+    """Update selected extras for a specific cart line."""
+    cart = _cart_or_404(request)
+    line_id = request.POST.get("line_id")
+    if not line_id:
+        return HttpResponseBadRequest("Missing line_id")
+    line = get_object_or_404(CartItem, pk=line_id, cart=cart)
+
+    modifier_ids = [int(x) for x in request.POST.get("modifiers", "").split(",") if x.strip().isdigit()]
+    valid_mods = list(Modifier.objects.filter(id__in=modifier_ids, is_available=True))
+    selected_mods = sorted([
+        {"modifier_id": m.id, "quantity": 1} for m in valid_mods
+    ], key=lambda d: d["modifier_id"])
+
+    line.selected_modifiers = selected_mods
+    line.save(update_fields=["selected_modifiers", "updated_at"])
+    cart.calculate_totals(); cart.save()
+    if _is_htmx(request):
+        html_cart = render_to_string("storefront/_cart_items.html", {"cart": cart}, request=request)
+        html_totals = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "cart": html_cart, "totals": html_totals, "bar": html_bar})
+    return HttpResponseRedirect(reverse('storefront:cart_full'))
 
 
-def debug_session_cart(request: HttpRequest) -> JsonResponse:
-    """Debug endpoint to check session cart data"""
-    session_cart = request.session.get('cart', [])
-    return JsonResponse({
-        'session_cart': session_cart,
-        'session_keys': list(request.session.keys()),
-        'cart_length': len(session_cart)
+@require_GET
+def cart_extras_modal(request: HttpRequest) -> HttpResponse:
+    """Return modal HTML to edit extras for a cart line."""
+    cart = _cart_or_404(request)
+    line_id = request.GET.get("line_id")
+    if not line_id:
+        return HttpResponseBadRequest("Missing line_id")
+    line = get_object_or_404(CartItem.objects.select_related("menu_item"), pk=line_id, cart=cart)
+    groups = (
+        ModifierGroup.objects.filter(menu_item=line.menu_item, is_active=True)
+        .prefetch_related("modifiers")
+        .order_by("name")
+    )
+    # Extract currently selected modifier ids
+    selected_ids = set()
+    try:
+        for m in (line.selected_modifiers or []):
+            mid = m.get("modifier_id")
+            if mid:
+                selected_ids.add(int(mid))
+    except Exception:
+        selected_ids = set()
+    return render(request, "storefront/_extras_modal.html", {
+        "line": line,
+        "groups": groups,
+        "selected_ids": selected_ids,
     })
 
 
-def test_cart_display(request: HttpRequest) -> HttpResponse:
-    return render(request, 'storefront/test_cart_display.html')
+@require_GET
+def cart_table_modal(request: HttpRequest) -> HttpResponse:
+    """Return modal HTML to select table(s) for dine-in."""
+    cart = _cart_or_404(request)
+    now = timezone.now()
+    in_two = now + timedelta(hours=2)
+    _ensure_min_tables()
+    tables = Table.objects.filter(is_active=True).order_by("location_id", "table_number")
+    sel_ids: list[int] = []
+    if cart.table_id:
+        sel_ids.append(cart.table_id)
+    if isinstance(cart.metadata, dict):
+        for tid in (cart.metadata.get("tables") or []):
+            if isinstance(tid, int) and tid not in sel_ids:
+                sel_ids.append(tid)
+    # Compute reserved ids in next 2 hours
+    try:
+        from reservations.models import Reservation
+        active_status = ["pending", "confirmed"]
+        reserved_ids = set(
+            Reservation.objects.filter(
+                status__in=active_status,
+                start_time__lt=in_two,
+                end_time__gt=now,
+            ).values_list("table_id", flat=True)
+        )
+    except Exception:
+        reserved_ids = set()
+    return render(request, "storefront/_table_modal.html", {
+        "cart": cart,
+        "tables": tables,
+        "sel_table_ids": sel_ids,
+        "reserved_ids": reserved_ids,
+    })
 
 
-def debug_cart_controls(request: HttpRequest) -> HttpResponse:
-    """Debug page for testing cart quantity controls"""
-    debug_html = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Debug Cart Controls</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        .cart-item { border: 1px solid #ddd; padding: 15px; margin: 10px 0; }
-        .qty-controls { display: flex; align-items: center; gap: 10px; }
-        .qty-controls button { padding: 5px 10px; cursor: pointer; }
-        .debug-info { background: #f0f0f0; padding: 10px; margin: 10px 0; }
-    </style>
-</head>
-<body>
-    <h1>Cart Controls Debug</h1>
-    
-    <div class="debug-info">
-        <h3>Debug Information</h3>
-        <div id="debug-output"></div>
-    </div>
-    
-    <div id="cart-items">
-        <!-- Cart items will be rendered here -->
-    </div>
-    
-    <script>
-        // Debug logging function
-        function debugLog(message) {
-            console.log(message);
-            const debugOutput = document.getElementById('debug-output');
-            debugOutput.innerHTML += '<div>' + new Date().toLocaleTimeString() + ': ' + message + '</div>';
-        }
-        
-        // Mock cart API functions for testing
-        window.cartApiGet = async function() {
-            debugLog('cartApiGet called');
-            try {
-                const response = await fetch('/api/orders/cart-simple/', {
-                    method: 'GET',
-                    credentials: 'same-origin'
-                });
-                const data = await response.json();
-                debugLog('Cart data received: ' + JSON.stringify(data));
-                return data;
-            } catch (error) {
-                debugLog('Error in cartApiGet: ' + error.message);
-                return { items: [] };
-            }
-        };
-        
-        window.cartApiAdd = async function(id, qty = 1) {
-            debugLog(`cartApiAdd called: id=${id}, qty=${qty}`);
-            try {
-                const response = await fetch('/api/cart/sync/', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': getCookie('csrftoken')
-                    },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({
-                        menu_item_id: id,
-                        quantity: qty
-                    })
-                });
-                const result = await response.json();
-                debugLog('cartApiAdd result: ' + JSON.stringify(result));
-                return result;
-            } catch (error) {
-                debugLog('Error in cartApiAdd: ' + error.message);
-            }
-        };
-        
-        window.cartApiRemove = async function(id, qty = 1) {
-            debugLog(`cartApiRemove called: id=${id}, qty=${qty}`);
-            try {
-                const response = await fetch('/api/cart/sync/', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': getCookie('csrftoken')
-                    },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({
-                        menu_item_id: id,
-                        quantity: -qty
-                    })
-                });
-                const result = await response.json();
-                debugLog('cartApiRemove result: ' + JSON.stringify(result));
-                return result;
-            } catch (error) {
-                debugLog('Error in cartApiRemove: ' + error.message);
-            }
-        };
-        
-        // Get CSRF token
-        function getCookie(name) {
-            let cookieValue = null;
-            if (document.cookie && document.cookie !== '') {
-                const cookies = document.cookie.split(';');
-                for (let i = 0; i < cookies.length; i++) {
-                    const cookie = cookies[i].trim();
-                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                        break;
-                    }
-                }
-            }
-            return cookieValue;
-        }
-        
-        // Render cart items
-        async function renderCart() {
-            debugLog('Rendering cart...');
-            const cartData = await cartApiGet();
-            const container = document.getElementById('cart-items');
-            
-            if (!cartData.items || cartData.items.length === 0) {
-                container.innerHTML = '<p>Cart is empty</p>';
-                return;
-            }
-            
-            let html = '';
-            cartData.items.forEach(item => {
-                html += `
-                    <div class="cart-item" data-id="${item.id}">
-                        <h4>${item.name || 'Item ' + item.id}</h4>
-                        <p>Price: NPR ${item.unit_price || item.price || '0.00'}</p>
-                        <div class="qty-controls">
-                            <button class="qty-dec" data-id="${item.id}">-</button>
-                            <span class="qty" data-id="${item.id}">${item.quantity || 0}</span>
-                            <button class="qty-inc" data-id="${item.id}">+</button>
-                            <button class="remove-item" data-id="${item.id}">Remove</button>
-                        </div>
-                    </div>
-                `;
-            });
-            
-            container.innerHTML = html;
-            debugLog('Cart rendered with ' + cartData.items.length + ' items');
-        }
-        
-        // Event delegation for cart controls
-        document.addEventListener('click', async (e) => {
-            const cartContainer = document.getElementById('cart-items');
-            if (!cartContainer || !cartContainer.contains(e.target)) return;
-            
-            const dec = e.target.closest('.qty-dec');
-            const inc = e.target.closest('.qty-inc');
-            const rem = e.target.closest('.remove-item');
-            
-            if (dec) {
-                const id = Number(dec.getAttribute('data-id'));
-                debugLog(`Decrease button clicked for item ${id}`);
-                await cartApiAdd(id, -1);
-                await renderCart();
-                return;
-            }
-            
-            if (inc) {
-                const id = Number(inc.getAttribute('data-id'));
-                debugLog(`Increase button clicked for item ${id}`);
-                await cartApiAdd(id, 1);
-                await renderCart();
-                return;
-            }
-            
-            if (rem) {
-                const id = Number(rem.getAttribute('data-id'));
-                debugLog(`Remove button clicked for item ${id}`);
-                await cartApiRemove(id, 999); // Remove all
-                await renderCart();
-                return;
-            }
-        });
-        
-        // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
-            debugLog('Page loaded, initializing cart...');
-            renderCart();
-        });
-    </script>
-</body>
-</html>
-    '''
-    return HttpResponse(debug_html, content_type='text/html')
+@require_POST
+@transaction.atomic
+def cart_seed_tables(request: HttpRequest) -> HttpResponse:
+    """Seed default tables and return refreshed modal HTML.
+    Useful when DB is empty and no tables exist.
+    """
+    # Seed a minimal set
+    seed_default_tables(min_tables=6)
+    # Then render modal
+    return cart_table_modal(request)
 
 
-def set_test_cart(request: HttpRequest) -> HttpResponse:
-    """Set test cart data in session and redirect to debug page"""
-    request.session['cart'] = [
-        {'id': 1, 'quantity': 2},
-        {'id': 2, 'quantity': 1}
-    ]
-    request.session.save()
-    return redirect('/debug-cart-controls/')
+@require_POST
+@transaction.atomic
+def cart_coupon(request: HttpRequest) -> HttpResponse:
+    """Apply a coupon code and refresh totals."""
+    cart = _cart_or_404(request)
+    code = (request.POST.get("code") or "").strip()
+    if not code:
+        return HttpResponseBadRequest("Missing code")
+
+    coupon = find_active_coupon(code)
+    if not coupon:
+        return JsonResponse({"ok": False, "error": "Invalid or expired coupon"}, status=400)
+
+    pre_total = cart.subtotal + cart.modifier_total
+    discount, _breakdown = compute_discount_for_order(
+        coupon=coupon,
+        order_total=pre_total,
+        item_count=sum(it.quantity for it in cart.items.all()),
+        user=getattr(request, "user", None),
+        is_first_order=False,
+    )
+    cart.applied_coupon_code = coupon.code
+    cart.coupon_discount = discount
+    cart.calculate_totals(); cart.save()
+    if _is_htmx(request):
+        html_totals = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
+        html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
+        return JsonResponse({"ok": True, "totals": html_totals, "bar": html_bar, "code": coupon.code, "discount": str(discount)})
+    return HttpResponseRedirect(reverse('storefront:cart_full'))
 
 
-def test_cart_buttons(request: HttpRequest) -> HttpResponse:
-    """Test page for cart add/subtract button functionality"""
-    html_content = '''
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cart Buttons Test</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .test-section {
-            border: 1px solid #ddd;
-            margin: 20px 0;
-            padding: 20px;
-            border-radius: 8px;
-        }
-        .cart-item {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            padding: 15px;
-            border: 1px solid #eee;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-        .qty-controls {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .qty-btn {
-            width: 32px;
-            height: 32px;
-            border: 1px solid #ddd;
-            background: #f8f9fa;
-            border-radius: 4px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-        }
-        .qty-btn:hover {
-            background: #e9ecef;
-        }
-        .qty-display {
-            min-width: 40px;
-            text-align: center;
-            font-weight: bold;
-        }
-        .log {
-            background: #f8f9fa;
-            border: 1px solid #ddd;
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 12px;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        .error { color: #dc3545; }
-        .success { color: #28a745; }
-        .info { color: #007bff; }
-        .btn {
-            background: #007bff;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            cursor: pointer;
-            margin: 5px;
-        }
-        .btn:hover {
-            background: #0056b3;
-        }
-    </style>
-</head>
-<body>
-    <h1>Cart Add/Subtract Buttons Test</h1>
-    
-    <div class="test-section">
-        <h2>Test Controls</h2>
-        <button class="btn" onclick="addTestItem()">Add Test Item to Cart</button>
-        <button class="btn" onclick="clearCart()">Clear Cart</button>
-        <button class="btn" onclick="refreshCart()">Refresh Cart Display</button>
-        <button class="btn" onclick="clearLog()">Clear Log</button>
-    </div>
+@require_GET
+def my_orders(request: HttpRequest) -> HttpResponse:
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return render(request, "storefront/my_orders.html", {"orders": [], "need_login": True})
+    orders = Order.objects.filter(user=request.user).order_by("-created_at").prefetch_related("items")
+    return render(request, "storefront/my_orders.html", {"orders": orders, "need_login": False})
 
-    <div class="test-section">
-        <h2>Cart Items</h2>
-        <div id="cart-items">No items in cart</div>
-    </div>
 
-    <div class="test-section">
-        <h2>Test Log</h2>
-        <div id="log" class="log"></div>
-    </div>
-
-    <script>
-        // CSRF token helper
-        function getCookie(name) {
-            let cookieValue = null;
-            if (document.cookie && document.cookie !== '') {
-                const cookies = document.cookie.split(';');
-                for (let i = 0; i < cookies.length; i++) {
-                    const cookie = cookies[i].trim();
-                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                        break;
-                    }
-                }
-            }
-            return cookieValue;
-        }
-
-        // Logging function
-        function log(message, type = 'info') {
-            const logDiv = document.getElementById('log');
-            const timestamp = new Date().toLocaleTimeString();
-            const logEntry = document.createElement('div');
-            logEntry.className = type;
-            logEntry.textContent = `[${timestamp}] ${message}`;
-            logDiv.appendChild(logEntry);
-            logDiv.scrollTop = logDiv.scrollHeight;
-            console.log(`[${type.toUpperCase()}] ${message}`);
-        }
-
-        function clearLog() {
-            document.getElementById('log').innerHTML = '';
-        }
-
-        // API helper
-        async function apiCall(url, options = {}) {
-            try {
-                const response = await fetch(url, {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': getCookie('csrftoken'),
-                        ...options.headers
-                    },
-                    ...options
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                return await response.json();
-            } catch (error) {
-                log(`API Error: ${error.message}`, 'error');
-                throw error;
-            }
-        }
-
-        // Cart operations
-        async function addTestItem() {
-            try {
-                log('Adding test item (Pizza, ID: 1) with quantity 2...');
-                const result = await apiCall('/api/orders/cart/items/', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        menu_item_id: 1,
-                        quantity: 2
-                    })
-                });
-                log('Test item added successfully', 'success');
-                await refreshCart();
-            } catch (error) {
-                log(`Failed to add test item: ${error.message}`, 'error');
-            }
-        }
-
-        async function clearCart() {
-            try {
-                log('Clearing cart...');
-                await apiCall('/api/cart/sync/', {
-                    method: 'POST',
-                    body: JSON.stringify({ items: [] })
-                });
-                log('Cart cleared successfully', 'success');
-                await refreshCart();
-            } catch (error) {
-                log(`Failed to clear cart: ${error.message}`, 'error');
-            }
-        }
-
-        async function incrementItem(itemId) {
-            try {
-                log(`Incrementing item ${itemId}...`);
-                await apiCall('/api/orders/cart/items/', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        menu_item_id: itemId,
-                        quantity: 1
-                    })
-                });
-                log(`Item ${itemId} incremented successfully`, 'success');
-                await refreshCart();
-            } catch (error) {
-                log(`Failed to increment item ${itemId}: ${error.message}`, 'error');
-            }
-        }
-
-        async function decrementItem(itemId) {
-            try {
-                // Get current quantity first
-                const cartData = await apiCall('/api/orders/cart-simple/');
-                const items = cartData.items || [];
-                const currentItem = items.find(item => item.id === itemId);
-                const currentQty = currentItem ? currentItem.quantity : 0;
-                
-                if (currentQty <= 1) {
-                    log(`Cannot decrement item ${itemId} - quantity is already at minimum (${currentQty})`, 'error');
-                    return;
-                }
-                
-                log(`Decrementing item ${itemId} (current qty: ${currentQty})...`);
-                await apiCall('/api/orders/cart/items/', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        menu_item_id: itemId,
-                        quantity: -1
-                    })
-                });
-                log(`Item ${itemId} decremented successfully`, 'success');
-                await refreshCart();
-            } catch (error) {
-                log(`Failed to decrement item ${itemId}: ${error.message}`, 'error');
-            }
-        }
-
-        async function refreshCart() {
-            try {
-                log('Refreshing cart display...');
-                const cartData = await apiCall('/api/orders/cart-simple/');
-                displayCart(cartData);
-                log('Cart display refreshed', 'success');
-            } catch (error) {
-                log(`Failed to refresh cart: ${error.message}`, 'error');
-            }
-        }
-
-        function displayCart(cartData) {
-            const cartContainer = document.getElementById('cart-items');
-            const items = cartData.items || [];
-            
-            if (items.length === 0) {
-                cartContainer.innerHTML = '<p>No items in cart</p>';
-                return;
-            }
-
-            cartContainer.innerHTML = items.map(item => `
-                <div class="cart-item">
-                    <div>
-                        <strong>${item.name || `Item ${item.id}`}</strong><br>
-                        <small>NPR ${(item.unit_price || 0).toFixed(2)} each</small>
-                    </div>
-                    <div class="qty-controls">
-                        <button class="qty-btn" onclick="decrementItem(${item.id})" title="Decrease quantity" ${item.quantity <= 1 ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>−</button>
-                        <span class="qty-display">${item.quantity}</span>
-                        <button class="qty-btn" onclick="incrementItem(${item.id})" title="Increase quantity">+</button>
-                    </div>
-                    <div>
-                        <strong>NPR ${(item.line_total || 0).toFixed(2)}</strong>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        // Initialize
-        document.addEventListener('DOMContentLoaded', function() {
-            log('Cart buttons test page loaded', 'success');
-            refreshCart();
-        });
-    </script>
-</body>
-</html>
-    '''
-    return HttpResponse(html_content, content_type='text/html')
+@require_GET
+def reservations_list(request: HttpRequest) -> HttpResponse:
+    if not getattr(request, "user", None) or not request.user.is_authenticated:
+        return render(request, "storefront/reservations_list.html", {"reservations": [], "need_login": True})
+    try:
+        from reservations.models import Reservation
+        reservations = Reservation.objects.filter(created_by=request.user).order_by("-start_time")
+    except Exception:
+        reservations = []
+    return render(request, "storefront/reservations_list.html", {"reservations": reservations, "need_login": False})

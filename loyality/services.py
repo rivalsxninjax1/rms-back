@@ -5,7 +5,7 @@ from typing import Optional, Tuple
 
 from django.db.models import Sum, Q
 
-from .models import TipLoyaltySetting
+from .models import LoyaltyRank, LoyaltyProfile
 from orders.models import Order
 
 

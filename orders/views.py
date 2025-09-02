@@ -58,9 +58,12 @@ def _currency() -> str:
     return getattr(settings, "STRIPE_CURRENCY", "usd").lower()
 
 def _fetch_menu_item(mi_id: int) -> Tuple[str, Decimal]:
-    mi = MenuItem.objects.get(pk=mi_id)
-    price = Decimal(str(getattr(mi, "price", 0)))
-    return (mi.name, price)
+    try:
+        mi = MenuItem.objects.get(pk=mi_id)
+        price = Decimal(str(getattr(mi, "price", 0)))
+        return (mi.name, price)
+    except MenuItem.DoesNotExist:
+        raise ValueError(f"Menu item with ID {mi_id} does not exist")
 
 def _normalize_items(items_in: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -85,52 +88,70 @@ def _normalize_items(items_in: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 def _cart_get(request) -> List[Dict[str, Any]]:
-    return list(request.session.get("cart", []))
+    from .session_utils import SessionCartManager
+    manager = SessionCartManager(request)
+    return manager.get_cart_items()
 
 def _cart_set(request, items: List[Dict[str, Any]]):
-    from django.utils import timezone
-    request.session["cart"] = items
-    request.session["cart_last_modified"] = timezone.now().isoformat()
-    request.session.modified = True
+    from .session_utils import SessionCartManager
+    manager = SessionCartManager(request)
+    manager.set_cart_data(items)
 
 def _cart_meta_get(request) -> Dict[str, Any]:
-    return dict(request.session.get("cart_meta", {}))
+    from .session_utils import SessionCartManager
+    manager = SessionCartManager(request)
+    return manager.get_cart_meta()
 
 def _cart_meta_set(request, meta: Dict[str, Any]):
-    request.session["cart_meta"] = meta
-    request.session.modified = True
+    from .session_utils import SessionCartManager
+    manager = SessionCartManager(request)
+    manager.set_cart_meta(meta)
 
 def _enrich(items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Decimal]:
-    from menu.models import Modifier, MenuItem
+    from .cache_utils import get_menu_items_batch_cached, get_modifiers_batch_cached
+    
+    if not items:
+        return [], Decimal("0")
+    
+    # Collect all menu item and modifier IDs
+    menu_item_ids = [int(it["id"]) for it in items]
+    all_modifier_ids = set()
+    for it in items:
+        modifiers = it.get("modifiers", [])
+        for mod in modifiers:
+            if mod.get("id"):
+                all_modifier_ids.add(int(mod["id"]))
+    
+    # Batch fetch from cache/database
+    menu_items_cache = get_menu_items_batch_cached(menu_item_ids)
+    modifier_cache = get_modifiers_batch_cached(list(all_modifier_ids))
     
     enriched: List[Dict[str, Any]] = []
     subtotal = Decimal("0")
+    
     for it in items:
         pid = int(it["id"])
-        qty = int(it.get("quantity", 1))
+        qty = int(it.get("quantity", 0))
         modifiers = it.get("modifiers", [])
         
-        name, unit = _fetch_menu_item(pid)
+        # Use cached menu item data
+        menu_item_data = menu_items_cache.get(pid)
+        if not menu_item_data:
+            continue  # Skip invalid items
+            
+        name, unit, image_url = menu_item_data
         
-        # Get menu item image
-        image_url = None
-        try:
-            menu_item = MenuItem.objects.get(id=pid)
-            if menu_item.image:
-                image_url = menu_item.image.url
-        except MenuItem.DoesNotExist:
-            pass
-        
-        # Calculate modifier price
+        # Calculate modifier price using cached data
         modifier_price = Decimal("0.00")
         modifier_names = []
-        if modifiers:
-            modifier_ids = [m.get("id") for m in modifiers if m.get("id")]
-            if modifier_ids:
-                modifier_objs = Modifier.objects.filter(id__in=modifier_ids, is_available=True)
-                for mod in modifier_objs:
-                    modifier_price += mod.price
-                    modifier_names.append(mod.name)
+        for mod_data in modifiers:
+            mod_id = mod_data.get("id")
+            if mod_id:
+                mod_id = int(mod_id)
+                if mod_id in modifier_cache:
+                    mod_name, mod_price = modifier_cache[mod_id]
+                    modifier_price += mod_price
+                    modifier_names.append(mod_name)
         
         item_unit_price = unit + modifier_price
         line = item_unit_price * qty
@@ -212,7 +233,7 @@ class SessionCartViewSet(viewsets.ViewSet):
         if user and getattr(user, "is_authenticated", False):
             from menu.models import MenuItem
             order = (
-                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                Order.objects.filter(user=user, status="PENDING")
                 .prefetch_related("items__menu_item")
                 .first()
             )
@@ -286,12 +307,12 @@ class SessionCartViewSet(viewsets.ViewSet):
             with transaction.atomic():
                 order = (
                     Order.objects.select_for_update()
-                    .filter(created_by=user, status="PENDING", is_paid=False)
+                    .filter(user=user, status="PENDING")
                     .prefetch_related("items__menu_item")
                     .first()
                 )
                 if not order:
-                    order = Order.objects.create(created_by=user, status="PENDING", currency=_currency())
+                    order = Order.objects.create(user=user, status="PENDING", currency=_currency())
                 items = _normalize_items(request.data.get("items", []))
                 order.items.all().delete()
                 for it in items:
@@ -354,20 +375,26 @@ class SessionCartViewSet(viewsets.ViewSet):
                 pid = int(pid); qty = int(qty)
             except Exception:
                 return Response({"detail": "Invalid id/quantity."}, status=400)
+            
+            # Validate menu item exists
+            try:
+                _, unit = _fetch_menu_item(pid)
+            except ValueError:
+                return Response({"detail": "Menu item not found."}, status=400)
+                
             with transaction.atomic():
                 order = (
                     Order.objects.select_for_update()
-                    .filter(created_by=user, status="PENDING", is_paid=False)
+                    .filter(user=user, status="PENDING")
                     .prefetch_related("items__menu_item")
                     .first()
                 )
                 if not order:
-                    order = Order.objects.create(created_by=user, status="PENDING", currency=_currency())
+                    order = Order.objects.create(user=user, status="PENDING", currency=_currency())
                 existing = {oi.menu_item_id: oi for oi in order.items.all()}
-                _, unit = _fetch_menu_item(pid)
                 if pid in existing:
                     oi = existing[pid]
-                    oi.quantity = max(0, int(oi.quantity) + qty)
+                    oi.quantity = max(0, qty)  # Set quantity instead of adding
                     if oi.quantity == 0:
                         oi.delete()
                     else:
@@ -389,12 +416,18 @@ class SessionCartViewSet(viewsets.ViewSet):
         # Parse payload directly (do NOT use _normalize_items which drops <=0)
         try:
             pid = int(request.data.get("menu_item_id") or request.data.get("id") or 0)
-            qty = int(request.data.get("quantity") or 1)
+            qty = int(request.data.get("quantity", 1))
             modifiers = request.data.get("modifiers", [])
         except Exception:
             return Response({"detail": "Invalid id/quantity."}, status=400)
         if pid <= 0:
             return Response({"detail": "Invalid id."}, status=400)
+            
+        # Validate menu item exists
+        try:
+            _fetch_menu_item(pid)
+        except ValueError:
+            return Response({"detail": "Menu item not found."}, status=400)
 
         items = list(_cart_get(request))  # raw session items: [{"id":..,"quantity":..}, ...]
         # Coerce types and ensure structure
@@ -411,7 +444,7 @@ class SessionCartViewSet(viewsets.ViewSet):
         found = False
         for it in norm_items:
             if it["id"] == pid:
-                it["quantity"] = max(0, it["quantity"] + qty)
+                it["quantity"] = max(0, qty)  # Set quantity instead of adding
                 if modifiers:
                     it["modifiers"] = modifiers
                 found = True
@@ -425,7 +458,7 @@ class SessionCartViewSet(viewsets.ViewSet):
 
         # Drop zeros
         norm_items = [it for it in norm_items if it["quantity"] > 0]
-
+        
         _cart_set(request, norm_items)
 
         enriched, subtotal = _enrich(norm_items)
@@ -442,11 +475,11 @@ class SessionCartViewSet(viewsets.ViewSet):
                 return Response({"detail": "Invalid id."}, status=400)
             with transaction.atomic():
                 order = (
-                    Order.objects.select_for_update()
-                    .filter(created_by=user, status="PENDING", is_paid=False)
-                    .prefetch_related("items__menu_item")
-                    .first()
-                )
+                Order.objects.select_for_update()
+                .filter(user=user, status="PENDING")
+                .prefetch_related("items__menu_item")
+                .first()
+            )
                 if order:
                     order.items.filter(menu_item_id=pid).delete()
                 items = []
@@ -487,10 +520,40 @@ class SessionCartViewSet(viewsets.ViewSet):
 
     @action(methods=["post"], detail=False, url_path="reset_session", permission_classes=[AllowAny])
     def reset_session(self, request):
-        for k in ("cart", "cart_meta", "applied_coupon"):
-            request.session.pop(k, None)
-        request.session.modified = True
-        return Response({"status": "ok"})
+        """Clear all cart-related session data using the new session management utility."""
+        try:
+            from .session_utils import get_session_cart_manager
+            
+            # Use the new session cart manager
+            cart_manager = get_session_cart_manager(request)
+            
+            # Ensure session exists
+            if not cart_manager.ensure_session_exists():
+                return Response({
+                    "status": "error",
+                    "message": "Session initialization failed"
+                }, status=500)
+            
+            # Clear cart using the session manager
+            success = cart_manager.clear_cart(reinitialize=True)
+            
+            if not success:
+                return Response({
+                    "status": "error",
+                    "message": "Failed to reset session cart"
+                }, status=500)
+            
+            return Response({
+                "status": "ok", 
+                "message": "Cart cleared successfully",
+                "timestamp": timezone.now().isoformat()
+            })
+            
+        except Exception as e:
+            return Response({
+                "status": "error",
+                "message": "Failed to reset session cart"
+            }, status=500)
 
     @action(methods=["post"], detail=False, url_path="merge", permission_classes=[IsAuthenticated])
     def merge(self, request):
@@ -501,11 +564,11 @@ class SessionCartViewSet(viewsets.ViewSet):
         with transaction.atomic():
             order = (
                 Order.objects.select_for_update()
-                .filter(created_by=request.user, status="PENDING", is_paid=False)
+                .filter(user=request.user, status="PENDING")
                 .order_by("-id").first()
             )
             if not order:
-                order = Order.objects.create(created_by=request.user, status="PENDING", currency=_currency())
+                order = Order.objects.create(user=request.user, status="PENDING", currency=_currency())
 
             # Get all existing order items
             existing_items = list(order.items.select_related("menu_item"))
@@ -568,7 +631,7 @@ class SessionCartViewSet(viewsets.ViewSet):
         
         if user and getattr(user, "is_authenticated", False):
             order = (
-                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                Order.objects.filter(user=user, status="PENDING")
                 .prefetch_related("items__menu_item")
                 .first()
             )
@@ -619,7 +682,7 @@ class SessionCartViewSet(viewsets.ViewSet):
         if user and getattr(user, "is_authenticated", False):
             # For authenticated users, check DB cart (pending order)
             order = (
-                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                Order.objects.filter(user=user, status="PENDING")
                 .first()
             )
             if not order:
@@ -683,10 +746,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         user = getattr(self.request, "user", None)
         if user and getattr(user, "is_authenticated", False):
-            if hasattr(Order, "created_by"):
-                return qs.filter(created_by=user)
-            if hasattr(Order, "user"):
-                return qs.filter(user=user)
+            return qs.filter(user=user)
         return qs.none()
 
     def list(self, request, *args, **kwargs):
@@ -752,11 +812,11 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         with transaction.atomic():
             order = (
-                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                Order.objects.filter(user=user, status="PENDING")
                 .prefetch_related("items__menu_item").first()
             )
             if not order:
-                order = Order(created_by=user, status="PENDING", currency=_currency())
+                order = Order(user=user, status="PENDING", currency=_currency())
                 order.save()
 
             if not order.items.exists():
@@ -847,12 +907,14 @@ class OrderViewSet(viewsets.ModelViewSet):
 @csrf_exempt
 @require_http_methods(["GET"])
 def simple_cart_view(request):
-    """Simple cart view to bypass DRF permission issues"""
+    """Simple cart view using session management utility to bypass DRF permission issues"""
     try:
+        from .session_utils import get_session_cart_manager
+        
         user = getattr(request, "user", None)
         if user and getattr(user, "is_authenticated", False):
             order = (
-                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                Order.objects.filter(user=user, status="PENDING")
                 .prefetch_related("items__menu_item")
                 .first()
             )
@@ -872,9 +934,17 @@ def simple_cart_view(request):
             subtotal = str(sum(Decimal(i["unit_price"]) * i["quantity"] for i in items) if items else Decimal("0.00"))
             return JsonResponse({"items": items, "subtotal": subtotal, "currency": _currency(), "meta": _cart_meta_get(request)})
 
-        items = _normalize_items(_cart_get(request))
+        # Use session cart manager for guest users
+        cart_manager = get_session_cart_manager(request)
+        
+        # Debug logging
+        print(f"DEBUG: Session key: {request.session.session_key}")
+        print(f"DEBUG: Cart items from manager: {cart_manager.get_cart_items()}")
+        print(f"DEBUG: Raw session data: {dict(request.session)}")
+        
+        items = _normalize_items(cart_manager.get_cart_items())
         enriched, subtotal = _enrich(items)
-        meta = _cart_meta_get(request)
+        meta = cart_manager.get_cart_meta()
         return JsonResponse({"items": enriched, "subtotal": str(subtotal), "currency": _currency(), "meta": meta})
     except Exception as e:
         return JsonResponse({"error": str(e), "items": [], "subtotal": "0.00", "currency": _currency(), "meta": {}}, status=500)
@@ -883,8 +953,13 @@ def simple_cart_view(request):
 @csrf_exempt
 @require_http_methods(["GET"])
 def cart_expiration_view(request):
-    """Check if cart has expired and return expiration info."""
+    """Check if cart has expired and return expiration info using session management utility."""
     try:
+        from .session_utils import get_session_cart_manager
+        
+        # Use the new session cart manager
+        cart_manager = get_session_cart_manager(request)
+        
         # Check if middleware set the expiration flag
         cart_expired = request.session.pop('cart_expired', False)
         
@@ -895,13 +970,13 @@ def cart_expiration_view(request):
         if user and getattr(user, "is_authenticated", False):
             # For authenticated users, check DB cart
             order = (
-                Order.objects.filter(created_by=user, status="PENDING", is_paid=False)
+                Order.objects.filter(user=user, status="PENDING")
                 .first()
             )
             has_items = order and order.items.exists()
         else:
-            # For session carts
-            cart_items = _cart_get(request)
+            # For session carts, use session manager
+            cart_items = cart_manager.get_cart_items()
             has_items = len(cart_items) > 0
         
         return JsonResponse({

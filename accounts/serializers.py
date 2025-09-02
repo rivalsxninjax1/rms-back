@@ -1,8 +1,19 @@
 # accounts/serializers.py
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.utils import timezone
+from django.conf import settings
+from django.core.cache import cache
+from django.db import transaction
+
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+
+import re
+from datetime import datetime, timedelta
 
 User = get_user_model()
 
@@ -80,3 +91,80 @@ class RegisterSerializer(serializers.ModelSerializer):
             "access": str(ref.access_token),
             "refresh": str(ref),
         }
+
+
+class UserProfileSerializer(serializers.ModelSerializer):
+    """Serializer for user profile information."""
+    
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'date_joined', 'last_login')
+        read_only_fields = ('id', 'username', 'date_joined', 'last_login')
+    
+    def validate_email(self, value):
+        if value:
+            validate_email(value)
+            # Check if email is already taken by another user
+            if User.objects.filter(email__iexact=value).exclude(pk=self.instance.pk if self.instance else None).exists():
+                raise serializers.ValidationError("This email is already registered.")
+        return value
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Serializer for changing user password."""
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, min_length=8)
+    confirm_password = serializers.CharField(required=True)
+    
+    def validate_old_password(self, value):
+        user = self.context['request'].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Old password is incorrect.")
+        return value
+    
+    def validate_new_password(self, value):
+        try:
+            validate_password(value, self.context['request'].user)
+        except ValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
+    
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError("New passwords don't match.")
+        return attrs
+    
+    def save(self):
+        user = self.context['request'].user
+        user.set_password(self.validated_data['new_password'])
+        user.save()
+        return user
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Serializer for requesting password reset."""
+    email = serializers.EmailField(required=True)
+    
+    def validate_email(self, value):
+        if not User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("No user found with this email address.")
+        return value
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """Serializer for confirming password reset."""
+    token = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True, min_length=8)
+    confirm_password = serializers.CharField(required=True)
+    
+    def validate_new_password(self, value):
+        try:
+            validate_password(value)
+        except ValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
+    
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError("Passwords don't match.")
+        return attrs

@@ -1,159 +1,172 @@
-<!-- FILE: storefront/templates/storefront/base.html -->
-{% load static %}
+{% comment %} rms-back/templates/storefront/base.html {% endcomment %}
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>{% block title %}RMS — Storefront{% endblock %}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link href="{% static 'storefront/styles.css' %}" rel="stylesheet" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{% block title %}Storefront{% endblock %}</title>
   <style>
-    /* Minimal card look for the auth modal */
-    .modal { position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; }
-    .modal.hidden { display:none; }
-    .modal-card { background:#fff; width: 380px; max-width: 92vw; border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); padding:20px; position:relative; }
-    .modal-close { position:absolute; right:10px; top:8px; font-size:22px; border:none; background:transparent; cursor:pointer; }
-    .stack { display:flex; flex-direction:column; gap:10px; }
-    .muted { color:#666; font-size: 0.9em; }
-    .bar { background:#111; color:#fff; padding:10px 16px; display:flex; align-items:center; justify-content:space-between; }
-    .bar a { color:#fff; text-decoration:none; margin-right:12px; }
-    .brand { font-weight:700; }
-    .container { max-width: 960px; margin: 24px auto; padding: 0 16px; }
-    input, select, button { padding:8px 12px; border-radius:8px; border:1px solid #d1d5db; }
-    button { cursor:pointer; background:#111; color:#fff; border-color:#111; }
-    button.btn-secondary { background:#fff; color:#111; }
-    .hidden { display:none; }
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial,sans-serif;margin:0;background:#0f1115;color:#e7e9ee}
+    header,footer{background:#14151d;padding:12px 16px;position:sticky;top:0;z-index:30}
+    a{color:#7c5cff;text-decoration:none}
+    .container{max-width:1000px;margin:0 auto;padding:12px 16px;}
+    .grid{display:grid;gap:16px}
+    .grid-3{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+    .card{background:#171925;border:1px solid #1e2130;border-radius:14px;box-shadow:0 8px 24px rgba(0,0,0,.25);overflow:hidden}
+    .card img{width:100%;height:160px;object-fit:cover}
+    .btn{display:inline-block;padding:10px 12px;border-radius:12px;border:1px solid #2a2d3d;background:#1a1c27;color:#e7e9ee;cursor:pointer}
+    .btn.primary{background:#7c5cff;border-color:#7c5cff;color:white}
+    .row{display:flex;gap:8px;align-items:center}
+    .cartbar{position:fixed;bottom:12px;left:0;right:0;display:flex;justify-content:center;z-index:40}
+    .cartbar .inner{background:#171925;border:1px solid #2a2d3d;box-shadow:0 8px 24px rgba(0,0,0,.35);border-radius:999px;padding:8px 14px;display:flex;gap:12px;align-items:center}
+    .muted{color:#a7adbb}
+    .price{font-weight:600}
+    .qty{display:inline-flex;align-items:center;gap:8px}
+    input[type='number'], select, input[type='text']{background:#14151d;border:1px solid #272a3b;border-radius:10px;color:#e7e9ee;padding:8px 10px}
   </style>
+  {% block head %}{% endblock %}
 </head>
 <body>
-
-  <header class="bar">
-    <a href="{% url 'storefront:home' %}" class="brand">RMS</a>
-    <nav>
-      <a href="{% url 'storefront:menu' %}">Menu</a>
-      <a id="nav-orders" href="{% url 'storefront:my_orders' %}" style="display:none;">My Orders</a>
-      <a href="{% url 'storefront:reservations' %}">Reservation</a>
-      <a href="{% url 'storefront:contact' %}">Contact</a>
-
-      <!-- Login opens modal; Logout clears auth AND cart by design -->
-      <a href="#" id="nav-login">Login</a>
-      <a href="#" id="nav-logout" style="display:none;">Logout</a>
-
-      <a href="{% url 'storefront:cart' %}">Cart (<span id="cart-count">0</span>)</a>
-    </nav>
-  </header>
-
-  <main class="container">
-    {% block content %}{% endblock %}
-  </main>
-
-  <!-- Auth Modal (card style) -->
-  <div id="auth-modal" class="modal hidden" aria-hidden="true">
-    <div class="modal-card">
-      <button id="auth-close" class="modal-close" aria-label="Close">&times;</button>
-      <div id="auth-steps">
-
-        <div id="auth-step-choice">
-          <h3 style="margin-top:0">Welcome back</h3>
-          <div class="stack">
-            <button id="btn-open-login">Log in</button>
-            <button id="btn-open-signup" class="btn-secondary">Create account</button>
-          </div>
-          <p class="muted" style="margin-top:8px">You’ll be asked to log in at checkout if you’re not already.</p>
-        </div>
-
-        <div id="auth-step-login" class="hidden">
-          <h3 style="margin-top:0">Log in</h3>
-          <form id="modal-login-form" class="stack">
-            <input name="username" placeholder="Username or Email" required />
-            <input type="password" name="password" placeholder="Password" required />
-            <button type="submit">Log in</button>
-            <p id="modal-login-status" class="muted"></p>
-            <p class="muted" style="text-align:center">
-              <a href="#" id="link-to-signup">Need an account?</a>
-            </p>
-          </form>
-        </div>
-
-        <div id="auth-step-signup" class="hidden">
-          <h3 style="margin-top:0">Create account</h3>
-          <form id="modal-signup-form" class="stack">
-            <input name="username" placeholder="Username" required />
-            <input name="email" type="email" placeholder="Email" required />
-            <input name="first_name" placeholder="First name" />
-            <input name="last_name" placeholder="Last name" />
-            <input type="password" name="password" placeholder="Password" required />
-            <button type="submit">Sign up</button>
-            <p id="modal-signup-status" class="muted"></p>
-            <p class="muted" style="text-align:center">
-              <a href="#" id="link-to-login">Already have an account?</a>
-            </p>
-          </form>
-        </div>
-
+  <header>
+    <div class="container row" style="justify-content:space-between">
+      <div class="row" style="gap:12px">
+        <a href="{% url 'storefront:menu_list' %}">🍽️ Storefront</a>
+        <a href="{% url 'storefront:my_orders' %}">My Orders</a>
+        <a href="{% url 'storefront:reservations_list' %}">Reservations</a>
+      </div>
+      <div class="row" style="gap:8px">
+        {% if user.is_authenticated %}
+          <span class="muted">Hi, {{ user.get_username }}</span>
+          <button class="btn" type="button" onclick="logoutNow()">Logout</button>
+        {% else %}
+          <button id="loginBtn" class="btn" type="button" onclick="openAuthModal()">Login / Sign up</button>
+        {% endif %}
+        <a class="btn" href="{% url 'storefront:cart_full' %}">View Cart</a>
       </div>
     </div>
+  </header>
+
+  {% block content %}{% endblock %}
+
+  <div id="cartbar" class="cartbar">
+    {% if cart %}
+      {% include "storefront/_cart_bar.html" with cart=cart %}
+    {% else %}
+      <div class="inner" style="display:none"></div>
+    {% endif %}
   </div>
 
-  <!-- Page context for app.js (optional usage) -->
-  <script>
-    window.page = "{{ page|default:'' }}";
-    window.item_id = {{ item_id|default:'0' }};
-    
-    // Define cartApiGet globally to ensure it's always available
-    window.cartApiGet = async function cartApiGet(){
-      // First try to get data from server
-      const r = await fetch("/api/orders/cart-simple/", { 
-        credentials: "include"
-      });
-      
-      let serverData = { items: [] };
-      if (r.ok) {
-        serverData = await r.json();
-      }
-      
-      // If server has no items, check localStorage cart_v1 (from app.js)
-      if (!serverData.items || serverData.items.length === 0) {
-        try {
-          const cartV1 = localStorage.getItem('cart_v1');
-          if (cartV1) {
-            const cart = JSON.parse(cartV1);
-            if (cart.items && typeof cart.items === 'object') {
-              // Convert cart_v1 format to expected format
-              const items = Object.entries(cart.items).map(([id, item]) => ({
-                id: parseInt(id),
-                name: item.name || `Item ${id}`,
-                quantity: item.qty || 0,
-                unit_price: item.price || 0,
-                line_total: (item.qty || 0) * (item.price || 0),
-                total_unit_price: item.price || 0,
-                modifier_price: 0,
-                modifier_names: []
-              }));
-              
-              return {
-                items: items,
-                subtotal: items.reduce((sum, item) => sum + (item.line_total || 0), 0).toFixed(2),
-                meta: cart
-              };
-            }
-          }
-        } catch (e) {
-          console.error('Error reading cart_v1 from localStorage:', e);
-        }
-      }
-      
-      return serverData;
-    }
-  </script>
+  <!-- Auth Modal -->
+  <div id="authModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1100;align-items:center;justify-content:center">
+    <div class="card" style="width:520px;max-width:94vw;max-height:80vh;overflow:auto;padding:12px 12px 14px">
+      <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h3 id="authTitle" style="margin:0">Login</h3>
+        <button class="btn" type="button" onclick="closeAuthModal()">×</button>
+      </div>
+      <div>
+        <form id="loginForm" class="auth-view">
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <input type="text" name="username" placeholder="Username" style="flex:1;min-width:200px" required>
+            <input type="password" name="password" placeholder="Password" style="flex:1;min-width:200px" required>
+          </div>
+          <button class="btn primary" type="submit" style="width:100%">Login</button>
+        </form>
+        <form id="registerForm" class="auth-view" style="display:none">
+          <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
+            <input type="text" name="username" placeholder="Username" style="flex:1;min-width:200px" required>
+            <input type="email" name="email" placeholder="Email (optional)" style="flex:1;min-width:200px">
+            <input type="password" name="password" placeholder="Password" style="flex:1;min-width:200px" required>
+          </div>
+          <button class="btn primary" type="submit" style="width:100%">Create Account</button>
+        </form>
+        <div class="muted" style="margin-top:8px;text-align:center">
+          <span id="authToggleText">Don't have an account? <a href="#" onclick="return toggleAuthMode()">Sign up</a></span>
+        </div>
+      </div>
+    </div>
+    <div onclick="closeAuthModal()" style="position:absolute;inset:0"></div>
+  </div>
 
-  <!-- JS bundles -->
-  <script src="{% static 'storefront/auth-modal.js' %}?v=2" defer></script>
-  <script src="{% static 'storefront/app.js' %}?v=2" defer></script>
-  <script src="{% static 'storefront/cart.js' %}?v=2" defer></script>
-<script src="{% static 'storefront/cart-pay.js' %}?v=2" defer></script>
-<script src="{% static 'storefront/cart-render.js' %}?v=2" defer></script>
-<script src="{% static 'storefront/cart-extras.js' %}?v=1" defer></script>
-  <!-- Note: logout handler lives in app.js and clears cart+auth consistently -->
+  <script>
+    function refreshCart(){ document.body.dispatchEvent(new Event('cart:changed')); }
+    // Generic AJAX form handler usable across pages
+    async function handleCartForm(ev){
+      ev.preventDefault();
+      const form = ev.target;
+      const url = form.getAttribute('action');
+      const fd = new FormData(form);
+      try{
+        const res = await fetch(url, { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: fd });
+        const ct = res.headers.get('content-type') || '';
+        const data = ct.includes('application/json') ? await res.json().catch(()=>null) : null;
+        if (data){
+          if (data.cart){ const el = document.getElementById('cartItems'); if (el) el.innerHTML = data.cart; }
+          if (data.totals){ const el = document.getElementById('cartTotals'); if (el) el.innerHTML = data.totals; }
+          if (data.options){ const el = document.getElementById('orderOptions'); if (el) el.innerHTML = data.options; }
+          if (data.bar){ const el = document.getElementById('cartbar'); if (el) el.innerHTML = data.bar; }
+          if (data.table_modal){ const el = document.getElementById('tableModalContent'); if (el){ el.innerHTML = data.table_modal; openTableModal?.(); } }
+        }
+      } catch(e){ console.warn('Form submit failed', e); }
+      refreshCart();
+      return false;
+    }
+    // Delegate all .js-ajax forms to handleCartForm
+    document.addEventListener('submit', function(ev){
+      const form = ev.target;
+      if (form && form.matches('form.js-ajax')){
+        handleCartForm(ev);
+      }
+    }, true);
+    // ---- Auth modal helpers ----
+    function csrfToken(){ const m = document.cookie.match(/csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : '{{ csrf_token }}'; }
+    function openAuthModal(){ const m=document.getElementById('authModal'); m.style.display='flex'; setAuthMode('login'); }
+    function closeAuthModal(){ const m=document.getElementById('authModal'); m.style.display='none'; }
+    function setAuthMode(mode){
+      const l=document.getElementById('loginForm'); const r=document.getElementById('registerForm'); const t=document.getElementById('authTitle'); const tx=document.getElementById('authToggleText');
+      if (mode==='register'){ l.style.display='none'; r.style.display='block'; t.textContent='Sign up'; tx.innerHTML = "Already have an account? <a href='#' onclick='return toggleAuthMode()'>Login</a>"; }
+      else { l.style.display='block'; r.style.display='none'; t.textContent='Login'; tx.innerHTML = "Don't have an account? <a href='#' onclick='return toggleAuthMode()'>Sign up</a>"; }
+      return false;
+    }
+    function toggleAuthMode(){ const r=document.getElementById('registerForm'); return setAuthMode(r.style.display==='none'?'register':'login'); }
+    async function submitLogin(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), password:f.password.value }; if(!payload.username||!payload.password){return}
+      try{
+        const res = await fetch('{% url "accounts:login_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken()}, body: JSON.stringify(payload)});
+        const data = await res.json(); if(!res.ok){ alert(data && data.detail ? data.detail : 'Login failed'); return; }
+        closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
+        if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
+      } catch(e){ console.error(e); alert('Login failed'); }
+      return false;
+    }
+    async function submitRegister(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), email:f.email.value.trim(), password:f.password.value }; if(!payload.username||!payload.password){return}
+      try{
+        const res = await fetch('{% url "accounts:register_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken()}, body: JSON.stringify(payload)});
+        const data = await res.json(); if(!res.ok){ alert(data && data.detail ? data.detail : 'Registration failed'); return; }
+        closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
+        if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
+      } catch(e){ console.error(e); alert('Registration failed'); }
+      return false;
+    }
+    async function logoutNow(){ try{ await fetch('{% url "accounts:logout_json" %}', {method:'POST', headers:{'X-CSRFToken': csrfToken()}}); location.reload(); }catch(e){ location.reload(); } }
+    // Bind forms if modal exists
+    document.addEventListener('DOMContentLoaded', ()=>{
+      const lf=document.getElementById('loginForm'); if(lf){ lf.addEventListener('submit', submitLogin); }
+      const rf=document.getElementById('registerForm'); if(rf){ rf.addEventListener('submit', submitRegister); }
+    });
+    // Listen for auth required prompts
+    window.addEventListener('auth:required', ()=>{ window._postAuthAction = window._postAuthAction || 'checkout'; openAuthModal(); });
+    async function refreshCartBar(){
+      try{
+        const res = await fetch('{% url "storefront:cart_bar" %}', { headers: {'X-Requested-With':'XMLHttpRequest'} });
+        const html = await res.text();
+        const el = document.getElementById('cartbar');
+        el.innerHTML = html;
+      } catch(e){ console.warn('Cart bar refresh failed', e); }
+    }
+    document.addEventListener('DOMContentLoaded', refreshCartBar);
+    document.body.addEventListener('cart:changed', refreshCartBar);
+  </script>
+  <!-- CSRF priming to ensure cookie is set -->
+  <form style="display:none">{% csrf_token %}</form>
+  {% block scripts %}{% endblock %}
 </body>
 </html>

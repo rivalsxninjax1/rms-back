@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Confirmation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .order-details {
+            background-color: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .order-item:last-child {
+            border-bottom: none;
+        }
+        .total {
+            font-weight: bold;
+            font-size: 1.2em;
+            text-align: right;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 2px solid #333;
+        }
+        .footer {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 30px;
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Order Confirmation</h1>
+        <p>Thank you for your order at {{ restaurant_name }}!</p>
+    </div>
+    
+    <div class="order-details">
+        <h2>Order #{{ order.order_number|default:order.id }}</h2>
+        <p><strong>Order Date:</strong> {{ order.created_at|date:"F d, Y g:i A" }}</p>
+        {% if order.service_type %}
+        <p><strong>Service Type:</strong> {{ order.service_type|title }}</p>
+        {% endif %}
+        {% if order.customer_name %}
+        <p><strong>Customer:</strong> {{ order.customer_name }}</p>
+        {% endif %}
+        
+        <h3>Order Items:</h3>
+        {% for item in order_items %}
+        <div class="order-item">
+            <div>
+                <strong>{{ item.menu_item.name }}</strong>
+                {% if item.modifiers.exists %}
+                <br><small>Modifiers: 
+                {% for modifier in item.modifiers.all %}
+                    {{ modifier.name }}{% if not forloop.last %}, {% endif %}
+                {% endfor %}
+                </small>
+                {% endif %}
+            </div>
+            <div>
+                {{ item.quantity }} × ${{ item.unit_price }} = ${{ item.total_price }}
+            </div>
+        </div>
+        {% empty %}
+        <p>No items found.</p>
+        {% endfor %}
+        
+        {% if order.tip_amount %}
+        <div class="order-item">
+            <div><strong>Tip</strong></div>
+            <div>${{ order.tip_amount }}</div>
+        </div>
+        {% endif %}
+        
+        {% if order.discount_amount %}
+        <div class="order-item">
+            <div><strong>Discount</strong></div>
+            <div>-${{ order.discount_amount }}</div>
+        </div>
+        {% endif %}
+        
+        <div class="total">
+            Total: ${{ order.total }}
+        </div>
+    </div>
+    
+    <div class="footer">
+        <p>Your order is being prepared and will be ready soon!</p>
+        <p>If you have any questions, please contact us at {{ support_email }}</p>
+        <p>Thank you for choosing {{ restaurant_name }}!</p>
+    </div>
+</body>
+</html>

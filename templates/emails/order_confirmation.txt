@@ -1,0 +1,27 @@
+ORDER CONFIRMATION - {{ restaurant_name }}
+
+Thank you for your order!
+
+Order #{{ order.order_number|default:order.id }}
+Order Date: {{ order.created_at|date:"F d, Y g:i A" }}
+{% if order.service_type %}Service Type: {{ order.service_type|title }}{% endif %}
+{% if order.customer_name %}Customer: {{ order.customer_name }}{% endif %}
+
+ORDER ITEMS:
+{% for item in order_items %}
+- {{ item.menu_item.name }} x {{ item.quantity }} @ ${{ item.unit_price }} = ${{ item.total_price }}
+{% if item.modifiers.exists %}  Modifiers: {% for modifier in item.modifiers.all %}{{ modifier.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}
+{% empty %}
+No items found.
+{% endfor %}
+
+{% if order.tip_amount %}Tip: ${{ order.tip_amount }}
+{% endif %}{% if order.discount_amount %}Discount: -${{ order.discount_amount }}
+{% endif %}
+TOTAL: ${{ order.total }}
+
+Your order is being prepared and will be ready soon!
+
+If you have any questions, please contact us at {{ support_email }}
+
+Thank you for choosing {{ restaurant_name }}!

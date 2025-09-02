@@ -1,0 +1,27 @@
+<div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+  <h3 style="margin:0">Select Table(s)</h3>
+  <button class="btn" type="button" onclick="closeTableModal()">×</button>
+</div>
+
+<div class="modal-body" style="max-height:60vh;overflow:auto">
+  <div class="muted" style="font-size:12px;margin-bottom:8px">Hold Cmd/Ctrl to select multiple tables.</div>
+  {% if tables %}
+    <select id="tableSelectList" multiple size="8" style="width:100%;min-width:320px">
+      {% for t in tables %}
+        <option value="{{ t.id }}"
+          {% if sel_table_ids and t.id in sel_table_ids %}selected{% endif %}
+          {% if reserved_ids and t.id in reserved_ids %}disabled{% endif %}>
+          {{ t.location.name }} · {{ t.table_number }} ({{ t.capacity }}){% if reserved_ids and t.id in reserved_ids %} — Reserved{% endif %}
+        </option>
+      {% endfor %}
+    </select>
+  {% else %}
+    <div class="muted" style="margin-bottom:8px">No tables found. You can auto‑seed a few default tables for testing.</div>
+    <button class="btn" onclick="seedTables()">Auto‑seed Tables</button>
+  {% endif %}
+</div>
+
+<div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+  <button class="btn" type="button" onclick="closeTableModal()">Cancel</button>
+  <button class="btn primary" type="button" onclick="saveTableModal()">Save Selection</button>
+</div>

@@ -1,0 +1,71 @@
+{% extends "storefront/base.html" %}
+{% load static %}
+{% block title %}{{ item.name }} · Storefront{% endblock %}
+{% block content %}
+<main class="container">
+  <div class="row" style="gap:24px;align-items:flex-start">
+    <div class="card" style="flex:1;max-width:460px">
+      {% if item.image %}
+      <img src="{{ item.image.url }}" alt="{{ item.name }}"/>
+      {% else %}
+      <img src="{% static 'storefront/img/placeholder.svg' %}" alt="{{ item.name }}"/>
+      {% endif %}
+    </div>
+    <div style="flex:1">
+      <h2 style="margin:0 0 4px">{{ item.name }}</h2>
+      <div class="muted" style="margin-bottom:8px">{{ item.category.name }}</div>
+      <div class="price" style="margin-bottom:8px">₹ {{ item.price }}</div>
+      <p class="muted" style="margin-bottom:16px">{{ item.description }}</p>
+
+      {% if groups %}
+      <h4>Extras</h4>
+      <div style="display:grid;gap:10px;margin:8px 0 14px">
+        {% for g in groups %}
+        <div>
+          <div class="muted" style="margin-bottom:6px">{{ g.name }}</div>
+          <select name="modifiers" multiple size="4" style="width:100%" data-mod-group="{{ g.id }}">
+            {% for m in g.modifiers.all %}
+            {% if m.is_available %}
+            <option value="{{ m.id }}">{{ m.name }} (+₹ {{ m.price }})</option>
+            {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <form id="addForm" class="row" action="{% url 'storefront:cart_add' %}" method="post" onsubmit="return collectModsAndSubmitAjax(event, this);">
+        {% csrf_token %}
+        <input type="hidden" name="menu_id" value="{{ item.id }}"/>
+        <input type="hidden" name="modifiers" value=""/>
+        <label class="row">Qty <input type="number" name="qty" value="1" min="1" style="width:80px"/></label>
+        <button class="btn primary">Add to Cart</button>
+        <a class="btn" href="{% url 'storefront:cart_full' %}">View Cart</a>
+      </form>
+    </div>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script>
+  function collectModsAndSubmitAjax(ev, form){
+    ev.preventDefault();
+    const selects = form.parentElement.querySelectorAll('select[name="modifiers"]');
+    const ids = [];
+    selects.forEach(sel => { [...sel.selectedOptions].forEach(o => ids.push(o.value)); });
+    form.querySelector('input[name="modifiers"]').value = ids.join(",");
+    return (async () => {
+      const url = form.getAttribute('action');
+      const fd = new FormData(form);
+      try{
+        const res = await fetch(url, { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: fd });
+        const data = await res.json();
+        if (data.bar){ document.getElementById('cartbar').innerHTML = data.bar; }
+      } catch(e){ console.error(e); }
+      refreshCart();
+      return false;
+    })();
+  }
+</script>
+{% endblock %}

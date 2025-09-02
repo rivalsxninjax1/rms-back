@@ -182,6 +182,44 @@ def run_post_payment_hooks(order, payment=None, request=None) -> None:
     Execute all post-payment steps. Each step is fully guarded.
     Idempotency: callers should ensure this is only run when the order transitions to PAID.
     """
+    # Immediate synchronous tasks (critical for order flow)
     decrement_stock_for_order(order)
-    email_receipt(order, payment=payment)
     emit_kitchen_signal(order, payment=payment, request=request)
+    
+    # Async tasks for non-critical post-payment processing
+    try:
+        from .tasks import (
+            send_order_confirmation_email_task,
+            send_staff_notification_task,
+            sync_order_to_pos_task,
+            record_payment_analytics_task,
+            process_loyalty_rewards_task,
+            update_inventory_levels_task
+        )
+        
+        # Queue async tasks
+        order_id = order.id
+        payment_data = {
+            'payment_method_type': getattr(payment, 'payment_method_type', 'unknown') if payment else 'unknown'
+        }
+        
+        # Send confirmation emails
+        send_order_confirmation_email_task.delay(order_id)
+        send_staff_notification_task.delay(order_id)
+        
+        # POS integration
+        sync_order_to_pos_task.delay(order_id)
+        
+        # Analytics and loyalty
+        record_payment_analytics_task.delay(order_id, payment_data)
+        process_loyalty_rewards_task.delay(order_id)
+        
+        # Inventory management (additional to immediate stock decrement)
+        update_inventory_levels_task.delay(order_id)
+        
+        logger.info(f"Queued async post-payment tasks for order {order_id}")
+        
+    except ImportError:
+        # Fallback to synchronous processing if Celery is not available
+        logger.info("Celery not available, falling back to synchronous email processing")
+        email_receipt(order, payment=payment)

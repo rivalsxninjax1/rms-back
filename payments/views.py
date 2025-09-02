@@ -1,19 +1,35 @@
 from __future__ import annotations
 
 import json
+import logging
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Dict, List
+from typing import Dict, List, Any
 
+import stripe
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse, HttpResponse
 from django.shortcuts import resolve_url
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views import View
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_http_methods
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from menu.models import MenuItem
-from .models import Order, OrderItem
+from .models import Order, OrderItem, StripePaymentIntent
+from .services import (
+    checkout_session_from_order,
+    mark_order_as_paid,
+    stripe_service,
+)
+
+logger = logging.getLogger(__name__)
+stripe.api_key = getattr(settings, "STRIPE_SECRET_KEY", "")
 
 # Optional DB-managed discount rules (admin-manageable)
 try:
@@ -327,9 +343,363 @@ def checkout(request: HttpRequest) -> JsonResponse:
 # Webhook (marks orders as paid)
 # -----------------------------------------------------------------------------
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_payment_intent(request):
+    """
+    Create a Stripe Payment Intent for an order or custom amount.
+    
+    Expected payload:
+    {
+        "amount_cents": 1000,  # Required: amount in cents
+        "currency": "usd",     # Optional: defaults to 'usd'
+        "order_id": 123,       # Optional: associate with order
+        "metadata": {...}      # Optional: additional metadata
+    }
+    """
+    try:
+        data = request.data
+        amount_cents = data.get('amount_cents')
+        
+        if not amount_cents or not isinstance(amount_cents, int):
+            return Response(
+                {'error': 'amount_cents is required and must be an integer'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if amount_cents < 50:
+            return Response(
+                {'error': 'Amount must be at least $0.50 (50 cents)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        currency = data.get('currency', 'usd')
+        order_id = data.get('order_id')
+        metadata = data.get('metadata', {})
+        
+        # Get associated order if provided
+        order = None
+        if order_id:
+            try:
+                order = Order.objects.get(id=order_id, user=request.user)
+            except Order.DoesNotExist:
+                return Response(
+                    {'error': 'Order not found or access denied'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Create payment intent
+        payment_intent = stripe_service.create_payment_intent(
+            amount_cents=amount_cents,
+            currency=currency,
+            order=order,
+            user=request.user,
+            metadata=metadata
+        )
+        
+        return Response({
+            'payment_intent_id': payment_intent.stripe_payment_intent_id,
+            'client_secret': payment_intent.stripe_client_secret,
+            'amount_cents': payment_intent.amount_cents,
+            'currency': payment_intent.currency,
+            'status': payment_intent.status,
+        }, status=status.HTTP_201_CREATED)
+        
+    except ValueError as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error in create_payment_intent: {e}")
+        return Response(
+            {'error': 'Payment processing error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in create_payment_intent: {e}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payment_intent_status(request, payment_intent_id):
+    """
+    Get the status of a payment intent.
+    """
+    try:
+        payment_intent = StripePaymentIntent.objects.get(
+            stripe_payment_intent_id=payment_intent_id,
+            user=request.user
+        )
+        
+        return Response({
+            'payment_intent_id': payment_intent.stripe_payment_intent_id,
+            'status': payment_intent.status,
+            'amount_cents': payment_intent.amount_cents,
+            'currency': payment_intent.currency,
+            'created_at': payment_intent.created_at,
+            'confirmed_at': payment_intent.confirmed_at,
+            'is_successful': payment_intent.is_successful(),
+            'is_pending': payment_intent.is_pending(),
+        })
+        
+    except StripePaymentIntent.DoesNotExist:
+        return Response(
+            {'error': 'Payment intent not found or access denied'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving payment intent status: {e}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancel_payment_intent(request, payment_intent_id):
+    """
+    Cancel a payment intent if possible.
+    """
+    try:
+        payment_intent = StripePaymentIntent.objects.get(
+            stripe_payment_intent_id=payment_intent_id,
+            user=request.user
+        )
+        
+        if not payment_intent.can_be_canceled():
+            return Response(
+                {'error': f'Payment intent cannot be canceled (status: {payment_intent.status})'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        success = stripe_service.cancel_payment_intent(payment_intent)
+        
+        if success:
+            return Response({
+                'message': 'Payment intent canceled successfully',
+                'payment_intent_id': payment_intent.stripe_payment_intent_id,
+                'status': payment_intent.status,
+            })
+        else:
+            return Response(
+                {'error': 'Failed to cancel payment intent'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+            
+    except StripePaymentIntent.DoesNotExist:
+        return Response(
+            {'error': 'Payment intent not found or access denied'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f"Error canceling payment intent: {e}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def stripe_webhook(request):
+    """
+    Handle Stripe webhooks with comprehensive signature verification and idempotency.
+    
+    This endpoint processes various Stripe events including:
+    - payment_intent.succeeded
+    - payment_intent.payment_failed
+    - payment_intent.canceled
+    - charge.dispute.created
+    """
+    payload = request.body
+    sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+    
+    # Verify webhook signature
+    if not stripe_service.verify_webhook_signature(payload, sig_header):
+        logger.error("Webhook signature verification failed")
+        return HttpResponse(
+            'Invalid signature',
+            status=400,
+            content_type='text/plain'
+        )
+    
+    try:
+        # Parse event data
+        event_data = json.loads(payload.decode('utf-8'))
+        event_type = event_data.get('type', 'unknown')
+        event_id = event_data.get('id', 'unknown')
+        
+        logger.info(f"Processing Stripe webhook event: {event_type} (ID: {event_id})")
+        
+        # Process the webhook event
+        success = stripe_service.process_webhook_event(event_data)
+        
+        if success:
+            logger.info(f"Successfully processed webhook event: {event_type}")
+            return HttpResponse(
+                'Webhook processed successfully',
+                status=200,
+                content_type='text/plain'
+            )
+        else:
+            logger.error(f"Failed to process webhook event {event_data.get('id')}")
+            return HttpResponse(
+                'Webhook processing failed',
+                status=500,
+                content_type='text/plain'
+            )
+            
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in webhook payload: {e}")
+        return HttpResponse(
+            'Invalid JSON payload',
+            status=400,
+            content_type='text/plain'
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error processing webhook: {e}")
+        return HttpResponse(
+            'Internal server error',
+            status=500,
+            content_type='text/plain'
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payment_analytics(request):
+    """
+    Get payment analytics for the specified date range.
+    """
+    from datetime import datetime, timedelta
+    from django.utils import timezone
+    
+    # Parse date parameters
+    start_date_str = request.GET.get('start_date')
+    end_date_str = request.GET.get('end_date')
+    
+    try:
+        if start_date_str:
+            start_date = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
+        else:
+            start_date = timezone.now() - timedelta(days=30)
+            
+        if end_date_str:
+            end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+        else:
+            end_date = timezone.now()
+            
+        analytics = stripe_service.get_payment_analytics(start_date, end_date)
+        return Response(analytics)
+        
+    except ValueError as e:
+        return Response({'error': f'Invalid date format: {e}'}, status=400)
+    except Exception as e:
+        logger.error(f"Error generating payment analytics: {e}")
+        return Response({'error': 'Failed to generate analytics'}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_setup_intent(request):
+    """
+    Create a SetupIntent for saving payment methods.
+    """
+    try:
+        customer_id = request.data.get('customer_id')
+        usage = request.data.get('usage', 'off_session')
+        
+        setup_intent = stripe_service.create_setup_intent(customer_id, usage)
+        return Response(setup_intent)
+        
+    except Exception as e:
+        logger.error(f"Error creating SetupIntent: {e}")
+        return Response({'error': 'Failed to create SetupIntent'}, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def customer_payment_methods(request, customer_id):
+    """
+    Get all payment methods for a customer.
+    """
+    try:
+        payment_methods = stripe_service.get_customer_payment_methods(customer_id)
+        return Response({'payment_methods': payment_methods})
+        
+    except Exception as e:
+        logger.error(f"Error retrieving payment methods: {e}")
+        return Response({'error': 'Failed to retrieve payment methods'}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def generate_receipt(request, order_id):
+    """
+    Generate and return a receipt PDF for an order.
+    """
+    try:
+        from django.http import HttpResponse
+        from orders.models import Order
+        
+        order = Order.objects.get(id=order_id)
+        payment_intent = StripePaymentIntent.objects.filter(order=order).first()
+        
+        filename, pdf_content = stripe_service.generate_receipt_pdf(order, payment_intent)
+        
+        if not pdf_content:
+            return Response({'error': 'Failed to generate receipt'}, status=500)
+        
+        response = HttpResponse(pdf_content, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+        
+    except Order.DoesNotExist:
+        return Response({'error': 'Order not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error generating receipt: {e}")
+        return Response({'error': 'Failed to generate receipt'}, status=500)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_refund(request, payment_intent_id):
+    """
+    Create a refund for a payment intent.
+    """
+    try:
+        payment_intent = StripePaymentIntent.objects.get(id=payment_intent_id)
+        amount_cents = request.data.get('amount_cents')
+        reason = request.data.get('reason', 'requested_by_customer')
+        
+        refund = stripe_service.create_refund(payment_intent, amount_cents, reason)
+        
+        return Response({
+            'refund_id': refund.id,
+            'stripe_refund_id': refund.stripe_refund_id,
+            'amount': refund.amount_dollars,
+            'status': refund.status,
+            'reason': refund.reason,
+        })
+        
+    except StripePaymentIntent.DoesNotExist:
+        return Response({'error': 'Payment intent not found'}, status=404)
+    except Exception as e:
+        logger.error(f"Error creating refund: {e}")
+        return Response({'error': 'Failed to create refund'}, status=500)
+
+
+# Legacy webhook endpoint for backward compatibility
 @csrf_exempt
 @require_POST
 def webhook(request: HttpRequest) -> HttpResponse:
+    """Legacy webhook handler - redirects to new comprehensive handler."""
     if not settings.STRIPE_WEBHOOK_SECRET or stripe is None:
         # If webhook not configured, acknowledge to avoid retries in dev
         return HttpResponse(status=200)
@@ -387,45 +757,21 @@ def webhook(request: HttpRequest) -> HttpResponse:
 
 
 def _clear_user_session_cart(user):
-    """
-    Clear the session cart for a specific user after successful payment.
-    This is called from the webhook handler when payment is confirmed.
-    """
-    if not user:
+    """Clear cart data from all sessions belonging to a specific user using session management utility."""
+    from django.contrib.auth.models import AnonymousUser
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    if not user or isinstance(user, AnonymousUser):
         return
-        
+    
     try:
-        from django.contrib.sessions.models import Session
-        from django.contrib.auth.models import AnonymousUser
+        # Use the SessionCartManager's class method for clearing user sessions
+        from orders.session_utils import SessionCartManager
+        cleared_count = SessionCartManager.clear_user_sessions(user)
         
-        # For authenticated users, we need to find their active sessions
-        # and clear the cart data from those sessions
-        if user and not isinstance(user, AnonymousUser):
-            # Get all active sessions
-            sessions = Session.objects.filter(expire_date__gte=timezone.now())
-            
-            for session in sessions:
-                try:
-                    session_data = session.get_decoded()
-                    # Check if this session belongs to our user
-                    if session_data.get('_auth_user_id') == str(user.id):
-                        # Clear cart-related session data
-                        if 'cart' in session_data:
-                            del session_data['cart']
-                        if 'cart_last_activity' in session_data:
-                            del session_data['cart_last_activity']
-                        if 'cart_last_modified' in session_data:
-                            del session_data['cart_last_modified']
-                        if '_cart_init_done' in session_data:
-                            del session_data['_cart_init_done']
-                        
-                        # Save the updated session
-                        session.session_data = session.encode(session_data)
-                        session.save()
-                except Exception:
-                    # Skip sessions that can't be decoded or updated
-                    continue
-                    
-    except Exception:
-        # Fail silently - cart clearing is not critical for payment processing
-        pass
+        logger.info(f"Cleared cart data from {cleared_count} sessions for user {user.id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to clear user sessions for user {user.id}: {e}")

@@ -6,12 +6,11 @@
   if (window.__CART_EXTRAS_BOUND__) return;
   window.__CART_EXTRAS_BOUND__ = true;
 
-  const $ = (sel, el=document) => el.querySelector(sel);
-  const $$ = (sel, el=document) => Array.from(el.querySelectorAll(sel));
+  // $ and $$ utilities are now available from utils.js
 
   async function fetchCart() {
     try {
-      const r = await fetch("/api/orders/cart/", { credentials: "include" });
+      const r = await fetch("/api/cart/", { credentials: "include" });
       if (!r.ok) throw new Error("cart fetch failed");
       return await r.json();
     } catch (e) {
@@ -26,7 +25,7 @@
 
   async function fetchModifierGroups() {
     try {
-      const r = await fetch("/api/orders/cart/modifiers/", { credentials: "include" });
+      const r = await fetch("/api/cart/modifiers/", { credentials: "include" });
       if (!r.ok) return { modifier_groups: [] };
       return await r.json();
     } catch (e) {
@@ -68,8 +67,7 @@
       for (const g of gList) {
         html += `<label style="display:block; font-weight:600; margin:8px 0 6px;">${g.name} ${g.is_required ? '(required)' : ''}</label>`;
         const multiple = (g.max_select || 0) !== 1;
-        const size = Math.min(6, Math.max(2, (g.modifiers || []).length));
-        html += `<select class="extras-select" data-item-id="${menuId}" data-group-id="${g.id}" ${multiple ? 'multiple' : ''} size="${size}" style="width:100%; padding:6px;">`;
+        html += `<select class="extras-select" data-item-id="${menuId}" data-group-id="${g.id}" ${multiple ? 'multiple' : ''} style="width:100%; padding:6px;">`;
         for (const m of (g.modifiers || [])) {
           const price = Number(m.price || 0).toFixed(2);
           const name = m.name + (price > 0 ? ` (+NPR ${price})` : "");
@@ -117,7 +115,7 @@
     }
     // Build payload with modifiers; quantity delta 0 to preserve qty
     const payload = { id: Number(itemId), quantity: 0, modifiers: ids.map(i => ({ id: i })) };
-    await api("/api/orders/cart/items", { method: "POST", body: JSON.stringify(payload) });
+    await api("/api/cart/items/add/", { method: "POST", body: JSON.stringify({ menu_item_id: payload.id, quantity: payload.quantity, modifiers: payload.modifiers }) });
     // Re-render cart list to reflect new prices
     if (typeof window.renderCartList === "function") await window.renderCartList();
   }

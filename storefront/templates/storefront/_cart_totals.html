@@ -1,0 +1,14 @@
+<div class="card" style="padding:12px;margin-top:16px">
+  <div class="row" style="justify-content:space-between"><span>Subtotal</span><strong>₹ {{ cart.subtotal }}</strong></div>
+  <div class="row" style="justify-content:space-between;margin-top:4px"><span>Extras</span><strong>₹ {{ cart.modifier_total }}</strong></div>
+  <div class="row" style="justify-content:space-between;margin-top:4px"><span>Tip</span><strong>₹ {{ cart.tip_amount }}</strong></div>
+  <form class="row js-ajax" style="margin:8px 0" action="{% url 'storefront:cart_tip' %}" method="post">
+    {% csrf_token %}
+    <input type="text" name="amount" placeholder="Enter tip (absolute)" value="{{ cart.tip_amount }}"/>
+    <button class="btn">Update Tip</button>
+  </form>
+  <div class="row" style="justify-content:space-between;margin-top:8px"><span>Total</span><strong>₹ {{ cart.total }}</strong></div>
+  {% if cart.expires_at %}
+  <div class="muted" style="margin-top:8px">Cart expires at {{ cart.expires_at|date:"H:i" }}.</div>
+  {% endif %}
+</div>

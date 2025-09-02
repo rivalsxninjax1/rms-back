@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping Cart - Restaurant</title>
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .cart-page {
+            min-height: 100vh;
+            background: #f8f9fa;
+            padding: 20px 0;
+        }
+        
+        .cart-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        .cart-header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        
+        .cart-header h1 {
+            margin: 0;
+            color: #333;
+            font-size: 2rem;
+        }
+        
+        .cart-content {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 30px;
+        }
+        
+        .cart-items-section {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .cart-items-header {
+            background: #e74c3c;
+            color: white;
+            padding: 20px 30px;
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+        
+        .cart-items-list {
+            padding: 0;
+        }
+        
+        .cart-item {
+            display: flex;
+            align-items: center;
+            padding: 20px 30px;
+            border-bottom: 1px solid #eee;
+            transition: background-color 0.2s;
+        }
+        
+        .cart-item:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .cart-item:last-child {
+            border-bottom: none;
+        }
+        
+        .item-image {
+            width: 80px;
+            height: 80px;
+            border-radius: 10px;
+            object-fit: cover;
+            margin-right: 20px;
+        }
+        
+        .item-details {
+            flex: 1;
+            margin-right: 20px;
+        }
+        
+        .item-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+            font-size: 1.1rem;
+        }
+        
+        .item-description {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+        }
+        
+        .item-extras {
+            font-size: 0.8rem;
+            color: #e74c3c;
+            font-weight: 500;
+        }
+        
+        .item-price {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1rem;
+            margin-right: 20px;
+            min-width: 80px;
+            text-align: right;
+        }
+        
+        .quantity-controls {
+            display: flex;
+            align-items: center;
+            margin-right: 20px;
+        }
+        
+        .qty-btn {
+            width: 35px;
+            height: 35px;
+            border: 2px solid #e74c3c;
+            background: white;
+            color: #e74c3c;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 600;
+        }
+        
+        .qty-btn:hover {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .qty-input {
+            width: 60px;
+            text-align: center;
+            border: none;
+            font-weight: 600;
+            font-size: 1rem;
+            margin: 0 10px;
+        }
+        
+        .remove-btn {
+            width: 35px;
+            height: 35px;
+            border: 2px solid #dc3545;
+            background: white;
+            color: #dc3545;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .remove-btn:hover {
+            background: #dc3545;
+            color: white;
+        }
+        
+        .cart-summary {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            height: fit-content;
+            position: sticky;
+            top: 20px;
+        }
+        
+        .summary-header {
+            background: #28a745;
+            color: white;
+            padding: 20px 25px;
+            font-weight: 600;
+            font-size: 1.1rem;
+            border-radius: 15px 15px 0 0;
+        }
+        
+        .summary-content {
+            padding: 25px;
+        }
+        
+        .order-type-section {
+            margin-bottom: 25px;
+        }
+        
+        .section-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1rem;
+        }
+        
+        .order-type-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .order-type-option {
+            position: relative;
+        }
+        
+        .order-type-radio {
+            display: none;
+        }
+        
+        .order-type-label {
+            display: block;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+        
+        .order-type-radio:checked + .order-type-label {
+            border-color: #e74c3c;
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .table-selection {
+            display: none;
+            margin-top: 15px;
+        }
+        
+        .table-select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+        
+        .tips-section {
+            margin-bottom: 25px;
+        }
+        
+        .tip-options {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .tip-btn {
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            background: white;
+            color: #333;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        
+        .tip-btn:hover {
+            border-color: #e74c3c;
+            color: #e74c3c;
+        }
+        
+        .tip-btn.active {
+            background: #e74c3c;
+            border-color: #e74c3c;
+            color: white;
+        }
+        
+        .custom-tip-input {
+            margin-top: 10px;
+        }
+        
+        .tips-input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+        
+        .coupon-section {
+            margin-bottom: 25px;
+        }
+        
+        .coupon-input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .coupon-input {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+        
+        .apply-coupon-btn {
+            padding: 12px 20px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 0 8px 8px 0;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        
+        .apply-coupon-btn:hover {
+            background: #c0392b;
+        }
+        
+        .apply-coupon-btn.remove-coupon {
+            background: #95a5a6;
+        }
+        
+        .apply-coupon-btn.remove-coupon:hover {
+            background: #7f8c8d;
+        }
+        
+        .totals-section {
+            border-top: 2px solid #eee;
+            padding-top: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .total-line {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 1rem;
+        }
+        
+        .total-line.final {
+            font-weight: 600;
+            font-size: 1.2rem;
+            color: #e74c3c;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+            margin-top: 15px;
+        }
+        
+        .cart-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .continue-shopping-btn {
+            padding: 15px;
+            background: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: background 0.2s;
+        }
+        
+        .continue-shopping-btn:hover {
+            background: #5a6268;
+        }
+        
+        .clear-cart-btn {
+            padding: 15px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1rem;
+            transition: background 0.2s;
+        }
+        
+        .clear-cart-btn:hover {
+            background: #c82333;
+        }
+        
+        .checkout-btn {
+            padding: 18px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 1.1rem;
+            transition: all 0.2s;
+        }
+        
+        .checkout-btn:hover {
+            background: #218838;
+            transform: translateY(-2px);
+        }
+        
+        .checkout-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .empty-cart {
+            text-align: center;
+            padding: 60px 30px;
+            color: #666;
+        }
+        
+        .empty-cart i {
+            font-size: 4rem;
+            color: #e9ecef;
+            margin-bottom: 20px;
+        }
+        
+        .empty-cart h3 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        @media (max-width: 768px) {
+            .cart-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .cart-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+            
+            .item-image {
+                margin-right: 0;
+            }
+            
+            .order-type-options {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <a href="/">Restaurant</a>
+            </div>
+            <div class="nav-menu">
+                <a href="/" class="nav-link">Home</a>
+                <a href="#" class="nav-link user-only" id="ordersLink" style="display: none;">My Orders</a>
+                <a href="#" class="nav-link user-only" id="reservationsLink" style="display: none;">Reservations</a>
+                <button class="cart-toggle" id="cartToggle">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span class="cart-count" id="cartCount">0</span>
+                </button>
+                <button class="login-btn" id="loginBtn">Login</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="cart-page">
+        <div class="cart-container">
+            <div class="cart-header">
+                <h1><i class="fas fa-shopping-cart"></i> Shopping Cart</h1>
+            </div>
+            
+            <div class="cart-content">
+                <!-- Cart Items Section -->
+                <div class="cart-items-section">
+                    <div class="cart-items-header">
+                        <i class="fas fa-utensils"></i> Your Items
+                    </div>
+                    <div class="cart-items-list" id="cartItemsList">
+                        <!-- Cart items will be loaded dynamically -->
+                    </div>
+                </div>
+                
+                <!-- Cart Summary Section -->
+                <div class="cart-summary">
+                    <div class="summary-header">
+                        <i class="fas fa-calculator"></i> Order Summary
+                    </div>
+                    <div class="summary-content">
+                        <!-- Order Type Selection -->
+                        <div class="order-type-section">
+                            <div class="section-title">Order Type</div>
+                            <div class="order-type-options">
+                                <div class="order-type-option">
+                                    <input type="radio" id="dineIn" name="orderType" value="dine_in" class="order-type-radio" checked>
+                                    <label for="dineIn" class="order-type-label">
+                                        <i class="fas fa-chair"></i><br>Dine-In
+                                    </label>
+                                </div>
+                                <div class="order-type-option">
+                                    <input type="radio" id="takeaway" name="orderType" value="takeaway" class="order-type-radio">
+                                    <label for="takeaway" class="order-type-label">
+                                        <i class="fas fa-shopping-bag"></i><br>Takeaway
+                                    </label>
+                                </div>
+                                <div class="order-type-option">
+                                    <input type="radio" id="ubereats" name="orderType" value="ubereats" class="order-type-radio">
+                                    <label for="ubereats" class="order-type-label">
+                                        <i class="fas fa-motorcycle"></i><br>UberEats
+                                    </label>
+                                </div>
+                                <div class="order-type-option">
+                                    <input type="radio" id="doordash" name="orderType" value="doordash" class="order-type-radio">
+                                    <label for="doordash" class="order-type-label">
+                                        <i class="fas fa-truck"></i><br>DoorDash
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Table Selection (shown only for dine-in) -->
+                            <div class="table-selection" id="tableSelection">
+                                <select class="table-select" id="tableSelect" multiple>
+                                    <option value="">Select Tables...</option>
+                                    <!-- Tables will be loaded dynamically -->
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Tips Section -->
+                        <div class="tips-section">
+                            <div class="section-title">Tip Amount</div>
+                            <div class="tip-options">
+                                <button class="tip-btn" data-percentage="15">15%</button>
+                                <button class="tip-btn" data-percentage="18">18%</button>
+                                <button class="tip-btn" data-percentage="20">20%</button>
+                                <button class="tip-btn custom-tip-btn" data-percentage="custom">Custom</button>
+                            </div>
+                            <div class="custom-tip-input" id="customTipInput" style="display: none;">
+                                <input type="number" class="tips-input" id="tipsInput" placeholder="Enter custom tip amount" min="0" step="0.01">
+                            </div>
+                        </div>
+                        
+                        <!-- Coupon Section -->
+                        <div class="coupon-section">
+                            <div class="section-title">Coupon Code</div>
+                            <div class="coupon-input-group">
+                                <input type="text" class="coupon-input" id="couponInput" placeholder="Enter coupon code">
+                                <button class="apply-coupon-btn" id="applyCouponBtn">Apply</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Totals Section -->
+                        <div class="totals-section">
+                            <div class="total-line">
+                                <span>Subtotal:</span>
+                                <span id="subtotalAmount">$0.00</span>
+                            </div>
+                            <div class="total-line" id="tipLine" style="display: none;">
+                                <span>Tip:</span>
+                                <span id="tipAmount">$0.00</span>
+                            </div>
+                            <div class="total-line" id="discountLine" style="display: none;">
+                                <span>Discount:</span>
+                                <span id="discountAmount">-$0.00</span>
+                            </div>
+                            <div class="total-line" id="deliveryFeeLine" style="display: none;">
+                                <span>Delivery Fee:</span>
+                                <span id="deliveryFeeAmount">$0.00</span>
+                            </div>
+                            <div class="total-line">
+                                <span>Tax:</span>
+                                <span id="taxAmount">$0.00</span>
+                            </div>
+                            <div class="total-line final">
+                                <span>Total:</span>
+                                <span id="totalAmount">$0.00</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Cart Actions -->
+                        <div class="cart-actions">
+                            <button class="continue-shopping-btn" id="continueShoppingBtn">
+                                <i class="fas fa-arrow-left"></i> Continue Shopping
+                            </button>
+                            <button class="clear-cart-btn" id="clearCartBtn">
+                                <i class="fas fa-trash"></i> Clear Cart
+                            </button>
+                            <button class="checkout-btn" id="checkoutBtn" disabled>
+                                <i class="fas fa-credit-card"></i> Proceed to Checkout
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Include existing modals -->
+    <!-- Authentication Modal -->
+    <div class="modal-overlay" id="authModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="authTitle">Login</h3>
+                <button class="modal-close" id="authClose">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Login Form -->
+                <form class="auth-form" id="loginForm">
+                    <div class="form-group">
+                        <label for="loginEmail">Email</label>
+                        <input type="email" id="loginEmail" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Password</label>
+                        <input type="password" id="loginPassword" name="password" required>
+                    </div>
+                    <button type="submit" class="auth-btn">Login</button>
+                </form>
+
+                <!-- Register Form -->
+                <form class="auth-form hidden" id="registerForm">
+                    <div class="form-group">
+                        <label for="registerUsername">Username</label>
+                        <input type="text" id="registerUsername" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerFirstName">First Name</label>
+                        <input type="text" id="registerFirstName" name="first_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerLastName">Last Name</label>
+                        <input type="text" id="registerLastName" name="last_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerEmail">Email</label>
+                        <input type="email" id="registerEmail" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerPassword">Password</label>
+                        <input type="password" id="registerPassword" name="password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerConfirmPassword">Confirm Password</label>
+                        <input type="password" id="registerConfirmPassword" name="confirm_password" required>
+                    </div>
+                    <button type="submit" class="auth-btn">Register</button>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <p id="authToggleText">Don't have an account? <a href="#" id="authToggle">Sign up</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/auth.js"></script>
+    <script src="/static/js/cart.js"></script>
+    
+    <!-- Cart Page Specific JavaScript -->
+    <script>
+        // Initialize only the components needed for the cart page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize auth manager if available
+            if (window.authManager) {
+                console.log('Auth manager initialized');
+            }
+            
+            // Initialize cart manager if available
+            if (window.cartManager) {
+                console.log('Cart manager initialized');
+            }
+            
+            // Initialize cart page specific functionality
+            if (window.CartPage) {
+                window.cartPage = new CartPage();
+                console.log('Cart page initialized');
+            }
+        });
+    </script>
+    
+    <script>
+        // Cart page specific functionality
+        class CartPage {
+            constructor() {
+                this.init();
+            }
+            
+            init() {
+                this.bindEvents();
+                this.loadCartData();
+                this.loadTables();
+            }
+            
+            bindEvents() {
+                // Order type change
+                document.querySelectorAll('input[name="orderType"]').forEach(radio => {
+                    radio.addEventListener('change', () => this.handleOrderTypeChange());
+                });
+                
+                // Tip buttons
+                document.querySelectorAll('.tip-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => this.handleTipSelection(e));
+                });
+                
+                // Tips input
+                const tipsInput = document.getElementById('tipsInput');
+                if (tipsInput) {
+                    tipsInput.addEventListener('input', () => this.updateTotals());
+                }
+                
+                // Coupon application
+                document.getElementById('applyCouponBtn').addEventListener('click', () => this.applyCoupon());
+                
+                // Cart actions
+                document.getElementById('continueShoppingBtn').addEventListener('click', () => {
+                    window.location.href = '/';
+                });
+                
+                document.getElementById('clearCartBtn').addEventListener('click', () => this.clearCart());
+                document.getElementById('checkoutBtn').addEventListener('click', () => this.proceedToCheckout());
+            }
+            
+            async loadCartData() {
+                try {
+                    await cartManager.loadCart();
+                    this.renderCartItems();
+                    this.updateTotals();
+                } catch (error) {
+                    console.error('Failed to load cart data:', error);
+                }
+            }
+            
+            async loadTables() {
+                try {
+                    const response = await fetch('/core/api/tables/', {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': this.getCSRFToken()
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to load tables');
+                    }
+                    
+                    const tables = await response.json();
+                    const tableSelect = document.getElementById('tableSelect');
+                    tableSelect.innerHTML = '<option value="">Select Tables...</option>';
+                    
+                    // Filter active tables and add to dropdown
+                    tables.filter(table => table.is_active).forEach(table => {
+                        const option = document.createElement('option');
+                        option.value = table.id;
+                        option.textContent = `Table ${table.table_number} (${table.capacity} seats)`;
+                        tableSelect.appendChild(option);
+                    });
+                    
+                    // Add event listener for table selection to check availability
+                    tableSelect.addEventListener('change', (e) => {
+                        if (e.target.value) {
+                            this.checkTableAvailability(e.target.value);
+                        }
+                    });
+                } catch (error) {
+                    console.error('Failed to load tables:', error);
+                    this.showMessage('Failed to load tables. Please try again.', 'error');
+                }
+            }
+            
+            renderCartItems() {
+                const cartItemsList = document.getElementById('cartItemsList');
+                const cart = cartManager.getCart();
+                
+                if (!cart.items || cart.items.length === 0) {
+                    cartItemsList.innerHTML = `
+                        <div class="empty-cart">
+                            <i class="fas fa-shopping-cart"></i>
+                            <h3>Your cart is empty</h3>
+                            <p>Add some delicious items to get started!</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                cartItemsList.innerHTML = cart.items.map(item => `
+                    <div class="cart-item" data-item-id="${item.id}">
+                        <img src="${item.menu_item?.image || '/static/images/placeholder.svg'}" alt="${item.menu_item?.name}" class="item-image">
+                        <div class="item-details">
+                            <div class="item-name">${item.menu_item?.name || 'Unknown Item'}</div>
+                            <div class="item-description">${item.menu_item?.short_description || ''}</div>
+                            ${item.selected_modifiers && item.selected_modifiers.length > 0 ? 
+                                `<div class="item-extras">Extras: ${item.selected_modifiers.map(mod => mod.name).join(', ')}</div>` : ''}
+                        </div>
+                        <div class="item-price">$${(item.unit_price * item.quantity).toFixed(2)}</div>
+                        <div class="quantity-controls">
+                            <button class="qty-btn" onclick="cartPage.updateQuantity('${item.id}', ${item.quantity - 1})">
+                                <i class="fas fa-minus"></i>
+                            </button>
+                            <input type="number" class="qty-input" value="${item.quantity}" min="1" 
+                                   onchange="cartPage.updateQuantity('${item.id}', this.value)">
+                            <button class="qty-btn" onclick="cartPage.updateQuantity('${item.id}', ${item.quantity + 1})">
+                                <i class="fas fa-plus"></i>
+                            </button>
+                        </div>
+                        <button class="remove-btn" onclick="cartPage.removeItem('${item.id}')">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                `).join('');
+            }
+            
+            handleOrderTypeChange() {
+                const selectedType = document.querySelector('input[name="orderType"]:checked').value;
+                const tableSelection = document.getElementById('tableSelection');
+                const deliveryFeeLine = document.getElementById('deliveryFeeLine');
+                
+                if (selectedType === 'dine_in') {
+                    tableSelection.style.display = 'block';
+                    deliveryFeeLine.style.display = 'none';
+                } else {
+                    tableSelection.style.display = 'none';
+                    if (selectedType === 'ubereats' || selectedType === 'doordash') {
+                        deliveryFeeLine.style.display = 'flex';
+                    } else {
+                        deliveryFeeLine.style.display = 'none';
+                    }
+                }
+                
+                this.updateTotals();
+            }
+            
+            handleTipSelection(e) {
+                const btn = e.target;
+                const percentage = btn.dataset.percentage;
+                const customTipInput = document.getElementById('customTipInput');
+                const tipsInput = document.getElementById('tipsInput');
+                
+                // Remove active class from all buttons
+                document.querySelectorAll('.tip-btn').forEach(b => b.classList.remove('active'));
+                
+                // Add active class to clicked button
+                btn.classList.add('active');
+                
+                if (percentage === 'custom') {
+                    // Show custom input
+                    customTipInput.style.display = 'block';
+                    tipsInput.focus();
+                } else {
+                    // Hide custom input and calculate percentage tip
+                    customTipInput.style.display = 'none';
+                    const cart = cartManager.getCart();
+                    const subtotal = cart.subtotal || 0;
+                    const tipAmount = (subtotal * parseFloat(percentage)) / 100;
+                    tipsInput.value = tipAmount.toFixed(2);
+                    this.updateTotals();
+                }
+            }
+            
+            updateTotals() {
+                const cart = cartManager.getCart();
+                const tipInput = document.getElementById('tipsInput');
+                const selectedOrderType = document.querySelector('input[name="orderType"]:checked').value;
+                
+                let subtotal = cart.subtotal || 0;
+                let tip = parseFloat(tipInput.value) || 0;
+                let discount = cart.appliedCoupon?.discount || 0;
+                let deliveryFee = 0;
+                
+                // Calculate delivery fee for third-party services
+                if (selectedOrderType === 'ubereats') {
+                    deliveryFee = 2.99;
+                } else if (selectedOrderType === 'doordash') {
+                    deliveryFee = 3.49;
+                }
+                
+                let tax = (subtotal + tip + deliveryFee - discount) * 0.08; // 8% tax
+                let total = subtotal + tip + deliveryFee + tax - discount;
+                
+                // Update display
+                document.getElementById('subtotalAmount').textContent = `$${subtotal.toFixed(2)}`;
+                document.getElementById('taxAmount').textContent = `$${tax.toFixed(2)}`;
+                document.getElementById('totalAmount').textContent = `$${total.toFixed(2)}`;
+                
+                // Show/hide tip line
+                const tipLine = document.getElementById('tipLine');
+                if (tip > 0) {
+                    tipLine.style.display = 'flex';
+                    document.getElementById('tipAmount').textContent = `$${tip.toFixed(2)}`;
+                } else {
+                    tipLine.style.display = 'none';
+                }
+                
+                // Show/hide discount line
+                const discountLine = document.getElementById('discountLine');
+                if (discount > 0) {
+                    discountLine.style.display = 'flex';
+                    document.getElementById('discountAmount').textContent = `-$${discount.toFixed(2)}`;
+                } else {
+                    discountLine.style.display = 'none';
+                }
+                
+                // Show/hide delivery fee line
+                const deliveryFeeLine = document.getElementById('deliveryFeeLine');
+                if (deliveryFee > 0) {
+                    deliveryFeeLine.style.display = 'flex';
+                    document.getElementById('deliveryFeeAmount').textContent = `$${deliveryFee.toFixed(2)}`;
+                } else {
+                    deliveryFeeLine.style.display = 'none';
+                }
+                
+                // Enable/disable checkout button
+                const checkoutBtn = document.getElementById('checkoutBtn');
+                checkoutBtn.disabled = cart.items.length === 0;
+            }
+            
+            async updateQuantity(itemId, newQuantity) {
+                if (newQuantity < 1) {
+                    await this.removeItem(itemId);
+                    return;
+                }
+                
+                try {
+                    await cartManager.updateItemQuantity(itemId, newQuantity);
+                    this.renderCartItems();
+                    this.updateTotals();
+                } catch (error) {
+                    console.error('Failed to update quantity:', error);
+                    apiUtils.showToast('Failed to update quantity', 'error');
+                }
+            }
+            
+            async removeItem(itemId) {
+                try {
+                    await cartManager.removeItem(itemId);
+                    this.renderCartItems();
+                    this.updateTotals();
+                    apiUtils.showToast('Item removed from cart', 'success');
+                } catch (error) {
+                    console.error('Failed to remove item:', error);
+                    apiUtils.showToast('Failed to remove item', 'error');
+                }
+            }
+            
+            async applyCoupon() {
+                const couponInput = document.getElementById('couponInput');
+                const couponCode = couponInput.value.trim();
+                
+                if (!couponCode) {
+                    apiUtils.showToast('Please enter a coupon code', 'warning');
+                    return;
+                }
+                
+                try {
+                    // Call the backend API to apply coupon
+                    const response = await fetch('/api/carts/apply_coupon/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+                        },
+                        body: JSON.stringify({
+                            coupon_code: couponCode
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok && data.message) {
+                        // Update local cart data
+                        if (data.cart) {
+                            const cart = cartManager.getCart();
+                            cart.appliedCoupon = {
+                                code: couponCode.toUpperCase(),
+                                discount: data.cart.coupon_discount || 0
+                            };
+                            cartManager.saveCart(cart);
+                        }
+                        
+                        // Show discount line
+                        const discountLine = document.getElementById('discountLine');
+                        discountLine.style.display = 'flex';
+                        const discountAmount = data.cart?.coupon_discount || 0;
+                        document.getElementById('discountAmount').textContent = `-$${discountAmount.toFixed(2)}`;
+                        
+                        // Update apply button to show remove option
+                        const applyBtn = document.getElementById('applyCouponBtn');
+                        applyBtn.textContent = 'Remove';
+                        applyBtn.classList.add('remove-coupon');
+                        applyBtn.onclick = () => this.removeCoupon();
+                        
+                        couponInput.disabled = true;
+                        
+                        this.updateTotals();
+                        apiUtils.showToast(`Coupon applied! You saved $${discountAmount.toFixed(2)}`, 'success');
+                        
+                    } else {
+                        apiUtils.showToast(data.error || 'Invalid coupon code', 'error');
+                    }
+                } catch (error) {
+                    console.error('Failed to apply coupon:', error);
+                    apiUtils.showToast('Failed to apply coupon', 'error');
+                }
+            }
+            
+            async removeCoupon() {
+                try {
+                    // Call the backend API to remove coupon
+                    const response = await fetch('/api/carts/remove_coupon/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value || ''
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        // Update local cart data
+                        const cart = cartManager.getCart();
+                        delete cart.appliedCoupon;
+                        cartManager.saveCart(cart);
+                        
+                        // Hide discount line
+                        const discountLine = document.getElementById('discountLine');
+                        discountLine.style.display = 'none';
+                        
+                        // Reset coupon input and button
+                        const couponInput = document.getElementById('couponInput');
+                        const applyBtn = document.getElementById('applyCouponBtn');
+                        
+                        couponInput.value = '';
+                        couponInput.disabled = false;
+                        applyBtn.textContent = 'Apply';
+                        applyBtn.classList.remove('remove-coupon');
+                        applyBtn.onclick = () => this.applyCoupon();
+                        
+                        this.updateTotals();
+                        apiUtils.showToast('Coupon removed', 'success');
+                        
+                    } else {
+                        apiUtils.showToast(data.error || 'Failed to remove coupon', 'error');
+                    }
+                } catch (error) {
+                    console.error('Failed to remove coupon:', error);
+                    apiUtils.showToast('Failed to remove coupon', 'error');
+                }
+            }
+            
+            async clearCart() {
+                if (confirm('Are you sure you want to clear your cart?')) {
+                    try {
+                        await cartManager.clearCart();
+                        this.renderCartItems();
+                        this.updateTotals();
+                        apiUtils.showToast('Cart cleared', 'success');
+                    } catch (error) {
+                        console.error('Failed to clear cart:', error);
+                        apiUtils.showToast('Failed to clear cart', 'error');
+                    }
+                }
+            }
+            
+            // Check table availability for selected table
+            async checkTableAvailability(tableId) {
+                try {
+                    const now = new Date();
+                    const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+                    const timeStr = now.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
+                    
+                    const response = await fetch(`/core/api/tables/${tableId}/availability/?date=${dateStr}&time=${timeStr}&duration=30`, {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': this.getCSRFToken()
+                        }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to check table availability');
+                    }
+                    
+                    const availability = await response.json();
+                    if (!availability.available) {
+                        this.showMessage('Selected table is currently unavailable for the next 30 minutes', 'warning');
+                        document.getElementById('tableSelect').value = '';
+                    } else {
+                        this.showMessage('Table is available for reservation', 'success');
+                    }
+                } catch (error) {
+                    console.error('Error checking table availability:', error);
+                    this.showMessage('Unable to check table availability', 'error');
+                }
+            }
+
+            async proceedToCheckout() {
+                if (!authManager.isAuthenticated()) {
+                    authManager.showAuthModal('login');
+                    return;
+                }
+                
+                const cart = cartManager.getCart();
+                if (cart.items.length === 0) {
+                    apiUtils.showToast('Your cart is empty', 'warning');
+                    return;
+                }
+                
+                const orderType = document.querySelector('input[name="orderType"]:checked')?.value;
+                const tableSelect = document.getElementById('tableSelect');
+                const selectedTable = tableSelect.value;
+                
+                if (orderType === 'dine_in' && !selectedTable) {
+                    this.showMessage('Please select a table for dine-in orders', 'warning');
+                    return;
+                }
+                
+                // For dine-in orders, create a 30-minute reservation
+                if (orderType === 'dine_in' && selectedTable) {
+                    try {
+                        const now = new Date();
+                        const reservationTime = now.toISOString();
+                        
+                        const reservationResponse = await fetch('/core/api/reservations/', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': this.getCSRFToken()
+                            },
+                            body: JSON.stringify({
+                                table_id: parseInt(selectedTable),
+                                reservation_time: reservationTime,
+                                duration_minutes: 30,
+                                party_size: 2, // Default party size, could be made configurable
+                                customer_name: 'Walk-in Customer',
+                                customer_phone: '+1234567890', // Default for walk-ins
+                                special_requests: 'Auto-created 30-minute reservation for order placement'
+                            })
+                        });
+                        
+                        if (!reservationResponse.ok) {
+                            const errorData = await reservationResponse.json();
+                            this.showMessage(errorData.error || 'Failed to reserve table', 'error');
+                            return;
+                        }
+                        
+                        const reservation = await reservationResponse.json();
+                        this.showMessage('Table reserved for 30 minutes', 'success');
+                        
+                        // Store reservation ID for the order
+                        sessionStorage.setItem('reservationId', reservation.id);
+                    } catch (error) {
+                        console.error('Failed to create reservation:', error);
+                        this.showMessage('Failed to reserve table', 'error');
+                        return;
+                    }
+                }
+                
+                // Collect order data
+                const orderData = {
+                    orderType: orderType,
+                    selectedTable: selectedTable,
+                    tip: parseFloat(document.getElementById('tipsInput').value) || 0,
+                    couponCode: document.getElementById('couponInput').value.trim(),
+                    reservationId: sessionStorage.getItem('reservationId') || null
+                };
+                
+                // Store order data and redirect to payment
+                sessionStorage.setItem('pendingOrder', JSON.stringify(orderData));
+                window.location.href = '/checkout/';
+            }
+            
+            getCSRFToken() {
+                return document.querySelector('[name=csrfmiddlewaretoken]')?.value || 
+                       document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+            }
+            
+            showMessage(message, type) {
+                if (window.apiUtils && apiUtils.showToast) {
+                    apiUtils.showToast(message, type);
+                } else {
+                    alert(message);
+                }
+            }
+        }
+        
+        // Initialize cart page
+        const cartPage = new CartPage();
+        window.cartPage = cartPage;
+    </script>
+</body>
+</html>

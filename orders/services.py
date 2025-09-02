@@ -103,7 +103,7 @@ class OrderService:
                 method=payment_info['method'],
                 amount=payment_info['amount'],
                 reference=payment_info.get('reference', ''),
-                created_by=payment_data.get('user')
+                user=payment_data.get('user')
             )
             total_payment_amount += payment.amount
         

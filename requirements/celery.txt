@@ -1,0 +1,14 @@
+# Celery and related dependencies for task queue processing
+celery[redis]==5.3.4
+redis==5.0.1
+flower==2.0.1
+kombu==5.3.4
+billiard==4.2.0
+vine==5.1.0
+
+# Email dependencies
+django-ses==3.5.2
+
+# Monitoring and logging
+django-celery-results==2.5.1
+django-celery-beat==2.5.0

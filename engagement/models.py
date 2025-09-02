@@ -78,7 +78,7 @@ class ReservationHold(models.Model):
         (STATUS_EXPIRED, "Expired"),
     )
 
-    table = models.ForeignKey("reservations.Table", on_delete=models.CASCADE, related_name="holds")
+    table = models.ForeignKey("core.Table", on_delete=models.CASCADE, related_name="holds", help_text="Table being held for reservation")
     order = models.ForeignKey("orders.Order", on_delete=models.SET_NULL, null=True, blank=True, related_name="reservation_holds")
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
     expires_at = models.DateTimeField()

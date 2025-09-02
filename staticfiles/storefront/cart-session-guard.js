@@ -2,9 +2,9 @@
  * Defensive: ensure cart survives navigation and reflect count in header.
  */
 (function () {
-  const $ = (sel, el=document) => el.querySelector(sel);
+  // $ utility is now available from utils.js
   async function fetchCart() {
-    const r = await fetch("/api/orders/cart/", { credentials: "include" });
+    const r = await fetch("/api/cart/", { credentials: "include" });
     const d = await r.json().catch(() => ({ items: [] }));
     if (!d.items) d.items = [];
     return d.items;

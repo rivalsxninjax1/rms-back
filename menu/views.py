@@ -92,20 +92,91 @@ SESSION_CART_KEY = "server_cart_v1"
 
 
 def _session_cart_get(request: HttpRequest) -> Dict[str, Any]:
+    """Get cart data from session using the new session management utility."""
     try:
-        data = request.session.get(SESSION_CART_KEY) or {}
-        items = data.get("items") or {}
-        tip = int(data.get("tip_cents") or 0)
-        discount = int(data.get("discount_cents") or 0)
-        delivery = (data.get("delivery") or "DINE_IN").upper()
-        return {"items": items, "tip_cents": tip, "discount_cents": discount, "delivery": delivery}
-    except Exception:
+        from orders.session_utils import get_session_cart_manager
+        
+        # Use the session cart manager
+        cart_manager = get_session_cart_manager(request)
+        
+        # Get cart data from the session manager
+        cart_data = cart_manager.get_cart_data()
+        cart_meta = cart_data.get("meta", {})
+        
+        # Extract menu app specific data from meta or use defaults
+        server_cart = cart_meta.get(SESSION_CART_KEY, {})
+        
+        # Validate and sanitize items
+        items = server_cart.get("items") or {}
+        if not isinstance(items, dict):
+            items = {}
+        
+        # Validate numeric fields
+        try:
+            tip = max(0, int(server_cart.get("tip_cents") or 0))
+        except (ValueError, TypeError):
+            tip = 0
+            
+        try:
+            discount = max(0, int(server_cart.get("discount_cents") or 0))
+        except (ValueError, TypeError):
+            discount = 0
+        
+        # Validate delivery method
+        delivery = (server_cart.get("delivery") or "DINE_IN").upper()
+        valid_delivery_methods = ["DINE_IN", "UBER_EATS", "DOORDASH", "PICKUP"]
+        if delivery not in valid_delivery_methods:
+            delivery = "DINE_IN"
+        
+        return {
+            "items": items, 
+            "tip_cents": tip, 
+            "discount_cents": discount, 
+            "delivery": delivery
+        }
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error getting session cart: {e}")
         return {"items": {}, "tip_cents": 0, "discount_cents": 0, "delivery": "DINE_IN"}
 
 
 def _session_cart_set(request: HttpRequest, payload: Dict[str, Any]) -> None:
-    request.session[SESSION_CART_KEY] = payload
-    request.session.modified = True
+    """Set cart data in session using the new session management utility."""
+    try:
+        from orders.session_utils import get_session_cart_manager
+        
+        # Use the session cart manager
+        cart_manager = get_session_cart_manager(request)
+        
+        # Validate payload structure
+        if not isinstance(payload, dict):
+            payload = {"items": {}, "tip_cents": 0, "discount_cents": 0, "delivery": "DINE_IN"}
+        
+        # Ensure required keys exist with defaults
+        validated_payload = {
+            "items": payload.get("items") or {},
+            "tip_cents": max(0, int(payload.get("tip_cents") or 0)),
+            "discount_cents": max(0, int(payload.get("discount_cents") or 0)),
+            "delivery": (payload.get("delivery") or "DINE_IN").upper()
+        }
+        
+        # Get current cart data and meta
+        current_cart_data = cart_manager.get_cart_data()
+        current_meta = current_cart_data.get("meta", {})
+        
+        # Update the session cart data in meta
+        current_meta[SESSION_CART_KEY] = validated_payload
+        
+        # Set cart data with updated meta
+        cart_manager.set_cart_data(current_cart_data.get("items", []), current_meta)
+        
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error setting session cart: {e}")
 
 
 class CartView(APIView):

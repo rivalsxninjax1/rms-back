@@ -6,33 +6,18 @@ from typing import Optional
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 from django.db import models, transaction
 from django.utils import timezone
+from django.utils.html import strip_tags
+import re
 
 User = get_user_model()
 
 
-class Table(models.Model):
-    """
-    Physical dining table at a specific Location.
-    NOTE: This matches the original ZIP schema (Location + table_number uniqueness).
-    """
-    location = models.ForeignKey(
-        "core.Location",
-        on_delete=models.CASCADE,
-        related_name="tables",
-    )
-    table_number = models.CharField(max_length=50)
-    capacity = models.PositiveIntegerField()
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ["location", "table_number"]
-        ordering = ["location_id", "table_number"]
-
-    def __str__(self) -> str:  # pragma: no cover
-        return f"{self.location_id}#{self.table_number} ({self.capacity})"
+# Note: Table model moved to core.models for centralized management
+# Import the core Table model
+from core.models import Table
 
 
 class Reservation(models.Model):
@@ -55,15 +40,21 @@ class Reservation(models.Model):
         (STATUS_COMPLETED, "Completed"),
     ]
 
+    phone_regex = RegexValidator(
+        regex=r'^\+?1?\d{9,15}$',
+        message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed."
+    )
+
     location = models.ForeignKey(
         "core.Location",
         on_delete=models.CASCADE,
         related_name="reservations",
     )
     table = models.ForeignKey(
-        Table,
+        "core.Table",
         on_delete=models.PROTECT,
         related_name="reservations",
+        help_text="Table for this reservation"
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -74,9 +65,22 @@ class Reservation(models.Model):
     )
 
     # Guest-facing fields (optional if user not provided)
-    guest_name = models.CharField(max_length=120, blank=True)
-    guest_phone = models.CharField(max_length=40, blank=True)
-    party_size = models.PositiveIntegerField(default=2)
+    guest_name = models.CharField(
+        max_length=120, 
+        blank=True,
+        help_text="Guest name (HTML tags will be stripped)"
+    )
+    guest_phone = models.CharField(
+        max_length=40, 
+        blank=True,
+        validators=[phone_regex],
+        help_text="Guest phone number"
+    )
+    party_size = models.PositiveIntegerField(
+        default=2,
+        validators=[MinValueValidator(1), MaxValueValidator(50)],
+        help_text="Number of guests (1-50)"
+    )
 
     # Window
     start_time = models.DateTimeField()
@@ -85,8 +89,16 @@ class Reservation(models.Model):
     # For filter convenience (kept because original code filtered on this)
     reservation_date = models.DateField(editable=False)
 
-    note = models.TextField(blank=True)
-    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    note = models.TextField(
+        blank=True,
+        help_text="Reservation notes (HTML tags will be stripped)"
+    )
+    status = models.CharField(
+        max_length=12, 
+        choices=STATUS_CHOICES, 
+        default=STATUS_PENDING,
+        help_text="Current reservation status"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -101,6 +113,12 @@ class Reservation(models.Model):
     # ---------------- Validation & overlap prevention ----------------
 
     def clean(self):
+        # Sanitize text fields
+        if self.guest_name:
+            self.guest_name = strip_tags(self.guest_name).strip()
+        if self.note:
+            self.note = strip_tags(self.note).strip()
+            
         if self.end_time <= self.start_time:
             raise ValidationError({"end_time": "End time must be after start time."})
         if self.party_size < 1:

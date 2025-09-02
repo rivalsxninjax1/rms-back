@@ -1,0 +1,175 @@
+{% load static %}
+
+<div class="menu-items-grid">
+    {% for item in menu_items %}
+    <div class="menu-item-card" data-item-id="{{ item.id }}">
+        <div class="menu-item-image">
+            {% if item.image %}
+                <img src="{{ item.image }}" alt="{{ item.name }}" loading="lazy">
+            {% else %}
+                <div class="no-image-placeholder">
+                    <i class="fas fa-utensils"></i>
+                </div>
+            {% endif %}
+        </div>
+        
+        <div class="menu-item-content">
+            <h3 class="menu-item-name">{{ item.name }}</h3>
+            
+            {% if item.description %}
+            <p class="menu-item-description">{{ item.description|truncatewords:15 }}</p>
+            {% endif %}
+            
+            <div class="menu-item-meta">
+                {% if item.is_vegetarian %}
+                <span class="vegetarian-badge">
+                    <i class="fas fa-leaf"></i> Vegetarian
+                </span>
+                {% endif %}
+                
+                {% if item.preparation_time %}
+                <span class="prep-time">
+                    <i class="fas fa-clock"></i> {{ item.preparation_time }} min
+                </span>
+                {% endif %}
+            </div>
+            
+            <div class="menu-item-footer">
+                <span class="menu-item-price">${{ item.price }}</span>
+                <button class="btn btn-primary add-to-cart" data-add-to-cart data-menu-id="{{ item.id }}">
+                    <i class="fas fa-plus"></i> Add to Cart
+                </button>
+            </div>
+        </div>
+    </div>
+    {% empty %}
+    <div class="no-items-message">
+        <i class="fas fa-search"></i>
+        <p>No menu items found.</p>
+    </div>
+    {% endfor %}
+</div>
+
+<style>
+.menu-items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+    padding: 1rem 0;
+}
+
+.menu-item-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.menu-item-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.menu-item-image {
+    height: 200px;
+    overflow: hidden;
+    position: relative;
+}
+
+.menu-item-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.no-image-placeholder {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #666;
+    font-size: 2rem;
+}
+
+.menu-item-content {
+    padding: 1.5rem;
+}
+
+.menu-item-name {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem 0;
+    color: #333;
+}
+
+.menu-item-description {
+    color: #666;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    margin: 0 0 1rem 0;
+}
+
+.menu-item-meta {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.vegetarian-badge {
+    background: #e8f5e8;
+    color: #2d5a2d;
+    padding: 0.25rem 0.5rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 500;
+}
+
+.prep-time {
+    color: #666;
+    font-size: 0.8rem;
+}
+
+.menu-item-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.menu-item-price {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #e74c3c;
+}
+
+.add-to-cart {
+    background: #3498db;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.add-to-cart:hover {
+    background: #2980b9;
+}
+
+.no-items-message {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 3rem;
+    color: #666;
+}
+
+.no-items-message i {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+</style>

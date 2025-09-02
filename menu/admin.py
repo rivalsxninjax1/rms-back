@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django import forms
 
-from .models import MenuItem, MenuCategory
+from .models import MenuItem, MenuCategory, ModifierGroup, Modifier
 
 
 # --- Forms -------------------------------------------------------------------
@@ -54,3 +54,21 @@ class MenuItemAdmin(admin.ModelAdmin):
         if db_field.name == "category":
             kwargs.setdefault("queryset", MenuCategory.objects.all())
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+
+@admin.register(ModifierGroup)
+class ModifierGroupAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "menu_item", "is_required", "min_selections", "max_selections", "sort_order")
+    list_filter = ("is_required", "menu_item__category")
+    search_fields = ("name", "menu_item__name")
+    autocomplete_fields = ("menu_item",)
+    ordering = ("menu_item", "sort_order", "name")
+
+
+@admin.register(Modifier)
+class ModifierAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "modifier_group", "price", "is_available", "sort_order")
+    list_filter = ("is_available", "modifier_group__menu_item__category")
+    search_fields = ("name", "modifier_group__name", "modifier_group__menu_item__name")
+    autocomplete_fields = ("modifier_group",)
+    ordering = ("modifier_group", "sort_order", "name")

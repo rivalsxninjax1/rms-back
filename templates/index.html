@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restaurant Management System</title>
+    <link rel="stylesheet" href="{% load static %}{% static 'css/styles.css' %}">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="nav-brand">
+                <h1><i class="fas fa-utensils"></i> Restaurant</h1>
+            </div>
+            <nav class="nav-menu">
+                <ul>
+                    <li><a href="/" class="nav-link active">Menu</a></li>
+                    <li><a href="/cart/" class="nav-link">Cart</a></li>
+                    <li><a href="#about" class="nav-link">About</a></li>
+                    <li><a href="#contact" class="nav-link">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="nav-actions">
+                <a href="/cart/" class="cart-toggle" id="cartToggle">
+                    <i class="fas fa-shopping-cart"></i>
+                    <span class="cart-count" id="cartCount">0</span>
+                </a>
+                <button class="login-btn" id="loginBtn">Login</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="container">
+                <h2>Welcome to Our Restaurant</h2>
+                <p>Discover our delicious menu and order online</p>
+            </div>
+        </section>
+
+        <!-- Menu Categories -->
+        <section class="menu-categories" id="menuCategories">
+            <div class="container">
+                <h3>Menu Categories</h3>
+                <div class="category-filters" id="categoryFilters">
+                    <button class="category-btn active" data-category="all">All Items</button>
+                    <!-- Categories will be loaded dynamically -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Menu Items -->
+        <section class="menu-items" id="menuItems">
+            <div class="container">
+                <div class="items-grid" id="itemsGrid">
+                    <!-- Menu items will be loaded dynamically -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Cart Sidebar -->
+    <div class="cart-sidebar" id="cartSidebar">
+        <div class="cart-header">
+            <h3>Your Cart</h3>
+            <button class="cart-close" id="cartClose">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="cart-items" id="cartItems">
+            <!-- Cart items will be loaded dynamically -->
+        </div>
+        <div class="cart-footer">
+            <div class="cart-total">
+                <div class="subtotal">
+                    <span>Subtotal: $<span id="cartSubtotal">0.00</span></span>
+                </div>
+                <div class="tax">
+                    <span>Tax: $<span id="cartTax">0.00</span></span>
+                </div>
+                <div class="total">
+                    <strong>Total: $<span id="cartTotal">0.00</span></strong>
+                </div>
+            </div>
+            <button class="checkout-btn" id="checkoutBtn" disabled>Proceed to Checkout</button>
+        </div>
+    </div>
+
+    <!-- Authentication Modal -->
+    <div class="modal-overlay" id="authModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="authTitle">Login</h3>
+                <button class="modal-close" id="authClose">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <!-- Login Form -->
+                <form class="auth-form" id="loginForm">
+                    <div class="form-group">
+                        <label for="loginEmail">Email</label>
+                        <input type="email" id="loginEmail" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Password</label>
+                        <input type="password" id="loginPassword" name="password" required>
+                    </div>
+                    <button type="submit" class="auth-btn">Login</button>
+                </form>
+
+                <!-- Register Form -->
+                <form class="auth-form hidden" id="registerForm">
+                    <div class="form-group">
+                        <label for="registerUsername">Username</label>
+                        <input type="text" id="registerUsername" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerFirstName">First Name</label>
+                        <input type="text" id="registerFirstName" name="first_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerLastName">Last Name</label>
+                        <input type="text" id="registerLastName" name="last_name" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerEmail">Email</label>
+                        <input type="email" id="registerEmail" name="email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerPassword">Password</label>
+                        <input type="password" id="registerPassword" name="password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="registerConfirmPassword">Confirm Password</label>
+                        <input type="password" id="registerConfirmPassword" name="confirm_password" required>
+                    </div>
+                    <button type="submit" class="auth-btn">Register</button>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <p id="authToggleText">Don't have an account? <a href="#" id="authToggle">Sign up</a></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Checkout Modal -->
+    <div class="modal-overlay" id="checkoutModal">
+        <div class="modal large">
+            <div class="modal-header">
+                <h3>Checkout</h3>
+                <button class="modal-close" id="checkoutClose">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <form id="checkoutForm">
+                    <div class="checkout-section">
+                        <h4>Order Type</h4>
+                        <div class="radio-group">
+                            <label class="radio-option">
+                                <input type="radio" name="order_type" value="dine_in" checked>
+                                <span>Dine In</span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="order_type" value="takeaway">
+                                <span>Takeaway</span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="order_type" value="delivery">
+                                <span>Delivery</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="checkout-section" id="tableSection">
+                        <h4>Table Number</h4>
+                        <input type="number" id="tableNumber" name="table_number" min="1" placeholder="Enter table number">
+                    </div>
+
+                    <div class="checkout-section">
+                        <h4>Tip Amount</h4>
+                        <div class="tip-input">
+                            <span>$</span>
+                            <input type="number" id="tipAmount" name="tip_amount" min="0" step="0.01" placeholder="0.00">
+                        </div>
+                    </div>
+
+                    <div class="checkout-section">
+                        <h4>Special Instructions</h4>
+                        <textarea id="specialInstructions" name="special_instructions" placeholder="Any special requests or dietary restrictions?"></textarea>
+                    </div>
+
+                    <div class="checkout-summary">
+                        <div class="summary-line">
+                            <span>Subtotal:</span>
+                            <span>$<span id="checkoutSubtotal">0.00</span></span>
+                        </div>
+                        <div class="summary-line">
+                            <span>Tax:</span>
+                            <span>$<span id="checkoutTax">0.00</span></span>
+                        </div>
+                        <div class="summary-line">
+                            <span>Tip:</span>
+                            <span>$<span id="checkoutTip">0.00</span></span>
+                        </div>
+                        <div class="summary-line total">
+                            <span>Total:</span>
+                            <span>$<span id="checkoutTotal">0.00</span></span>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="payment-btn">
+                        <i class="fab fa-stripe"></i>
+                        Pay with Stripe
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Item Detail Modal -->
+    <div class="modal-overlay" id="itemModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="itemTitle">Item Details</h3>
+                <button class="modal-close" id="itemClose">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="item-detail">
+                    <img id="itemImage" src="" alt="" class="item-image">
+                    <div class="item-info">
+                        <p id="itemDescription" class="item-description"></p>
+                        <div class="item-price">
+                            <span class="price">$<span id="itemPrice">0.00</span></span>
+                        </div>
+                        <div class="item-extras" id="itemExtras">
+                            <!-- Extras will be loaded dynamically -->
+                        </div>
+                        <div class="quantity-controls">
+                            <button type="button" class="qty-btn" id="qtyMinus">-</button>
+                            <input type="number" id="itemQuantity" value="1" min="1" readonly>
+                            <button type="button" class="qty-btn" id="qtyPlus">+</button>
+                        </div>
+                        <button class="add-to-cart-btn" id="addToCartBtn">
+                            <i class="fas fa-cart-plus"></i>
+                            Add to Cart - $<span id="itemTotalPrice">0.00</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Scripts -->
+    <script src="{% load static %}{% static 'js/api.js' %}"></script>
+    <script src="{% load static %}{% static 'js/auth.js' %}"></script>
+    <script src="{% load static %}{% static 'js/cart.js' %}"></script>
+    <script src="{% load static %}{% static 'js/menu.js' %}"></script>
+    <script src="{% load static %}{% static 'js/checkout.js' %}"></script>
+    <script src="{% load static %}{% static 'js/app.js' %}"></script>
+</body>
+</html>

@@ -8,3 +8,5 @@ class OrdersConfig(AppConfig):
     def ready(self):
         # load login/logout cart merge signals
         from . import signals_cart  # noqa
+        # load cache invalidation signals
+        from . import signals  # noqa

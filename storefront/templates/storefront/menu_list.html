@@ -1,0 +1,34 @@
+{% extends "storefront/base.html" %}
+{% load static %}
+{% block title %}Menu · Storefront{% endblock %}
+{% block content %}
+<main class="container">
+  <h2>Menu</h2>
+  <div class="grid grid-3">
+    {% for it in items %}
+    <div class="card">
+      {% if it.image %}
+      <img src="{{ it.image.url }}" alt="{{ it.name }}"/>
+      {% else %}
+      <img src="{% static 'storefront/img/placeholder.svg' %}" alt="{{ it.name }}"/>
+      {% endif %}
+      <div style="padding:12px 12px 14px">
+        <div class="row" style="justify-content:space-between">
+          <strong>{{ it.name }}</strong>
+          <span class="price">₹ {{ it.price }}</span>
+        </div>
+        <p class="muted" style="margin:6px 0 10px">{{ it.short_description|default:it.description|truncatechars:90 }}</p>
+        <div class="row">
+          <a class="btn" href="{% url 'storefront:item_detail' it.slug %}">View Item</a>
+          <form action="{% url 'storefront:cart_add' %}" method="post" class="row js-ajax">
+            {% csrf_token %}
+            <input type="hidden" name="menu_id" value="{{ it.id }}"/>
+            <button class="btn primary">Add to Cart</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</main>
+{% endblock %}

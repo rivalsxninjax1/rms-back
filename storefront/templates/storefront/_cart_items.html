@@ -1,0 +1,43 @@
+<div class="card" style="padding:12px">
+  {% if cart.items.all %}
+  {% for line in cart.items.all %}
+    <div class="row" style="justify-content:space-between;padding:8px 0;border-bottom:1px solid #24283a">
+      <div class="row" style="gap:12px">
+        <strong>{{ line.menu_item.name }}</strong>
+        <span class="muted">x {{ line.quantity }}</span>
+        {% if line.has_modifiers %}
+        <div class="muted" style="margin-left:8px;">
+          Extras:
+          {% for m in line.get_modifier_details %}
+            {{ m.name }}{% if m.price %} (+₹ {{ m.price }}){% endif %}{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+          — <strong>₹ {{ line.extras_total }}</strong>
+        </div>
+        {% endif %}
+      </div>
+      <div class="row">
+        <button class="btn" style="margin-right:6px" onclick="loadExtrasModal({{ line.id }})">Edit Extras</button>
+        <form action="{% url 'storefront:cart_update' %}" method="post" class="js-ajax">
+          {% csrf_token %}
+          <input type="hidden" name="line_id" value="{{ line.id }}"/>
+          <input type="hidden" name="delta" value="-1"/>
+          <button class="btn">-</button>
+        </form>
+        <form action="{% url 'storefront:cart_update' %}" method="post" class="js-ajax">
+          {% csrf_token %}
+          <input type="hidden" name="line_id" value="{{ line.id }}"/>
+          <input type="hidden" name="delta" value="1"/>
+          <button class="btn">+</button>
+        </form>
+        <form action="{% url 'storefront:cart_remove' %}" method="post" class="js-ajax">
+          {% csrf_token %}
+          <input type="hidden" name="line_id" value="{{ line.id }}"/>
+          <button class="btn">Remove</button>
+        </form>
+      </div>
+    </div>
+  {% empty %}
+    <p class="muted">Your cart is empty.</p>
+  {% endfor %}
+  {% endif %}
+</div>

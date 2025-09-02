@@ -1,4 +1,5 @@
-/* storefront/static/storefront/js/app.js - Fixed Version */
+// rms-back/storefront/static/storefront/app.js
+/* storefront/static/storefront/js/app.js - Fixed & Backward-Compatible */
 
 /* ============================================================================
  * Utilities
@@ -18,60 +19,121 @@ function getCookie(name) {
   return "";
 }
 
-/* ============================================================================
- * API wrapper (Session-based, no JWT confusion)
- * ============================================================================ */
-
-async function _fetch(url, opts) {
-  const res = await fetch(url, opts);
-  let data = {};
-  try {
-    data = await res.json();
-  } catch (_) {}
-  return { res, data };
-}
-
-async function api(url, opts = {}) {
-  const headers = Object.assign(
-    {
+function jsonFetch(url, opts = {}) {
+  const defaults = {
+    headers: {
       "Content-Type": "application/json",
       "X-Requested-With": "XMLHttpRequest",
+      "X-CSRFToken": getCookie("csrftoken") || "",
     },
-    opts.headers || {}
-  );
-
-  // CSRF for session-auth endpoints
-  const csrftoken = getCookie("csrftoken");
-  if (csrftoken && !("X-CSRFToken" in headers) && (opts.method || "GET") !== "GET") {
-    headers["X-CSRFToken"] = csrftoken;
-  }
-
-  return await _fetch(url, { ...opts, headers, credentials: "include" });
+    credentials: "include",
+  };
+  return fetch(url, { ...defaults, ...opts });
 }
+
+/* ============================================================================
+ * API wrapper used by multiple pages
+ * ========================================================================== */
+
+const api = {
+  async get(url) {
+    const r = await jsonFetch(url);
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.json();
+  },
+  async post(url, body) {
+    const r = await jsonFetch(url, { method: "POST", body: JSON.stringify(body || {}) });
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.json();
+  },
+  async del(url) {
+    const r = await jsonFetch(url, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.json();
+  },
+};
 
 /* ============================================================================
  * Client Cart (localStorage with session merge support)
- * ============================================================================ */
+ * ========================================================================== */
 
 const CART_KEY = "cart_v1";
+const LEGACY_CART_KEY = "cart";
+
+/**
+ * Build a legacy "cart" array from the new cart state
+ */
+function _stateToLegacyArray(state) {
+  // state.items is an object keyed by id -> {qty, name, price, image}
+  const arr = [];
+  if (!state || !state.items) return arr;
+  for (const [id, it] of Object.entries(state.items)) {
+    const qty = Number(it.qty || 0);
+    if (qty <= 0) continue;
+    arr.push({
+      id: Number(id),
+      quantity: qty,
+      name: it.name || "",
+      price: Number(it.price || 0),
+      image: it.image || null,
+    });
+  }
+  return arr;
+}
+
+/**
+ * Convert legacy array to the formatted items shape the cart renderer expects
+ */
+function _legacyArrayToFormattedItems(arr) {
+  const items = Array.isArray(arr) ? arr : [];
+  return items
+    .map((item) => {
+      const id = parseInt(
+        item.menu_item || item.id || item.menu || item.menu_id || item.product || item.product_id,
+        10
+      );
+      const qty = parseInt(item.quantity || item.qty || item.q || 1, 10);
+      const price = Number(item.price || 0);
+      if (!id || id <= 0 || !qty || qty <= 0) return null;
+      return {
+        id,
+        name: item.name || `Item ${id}`,
+        quantity: qty,
+        unit_price: price,
+        line_total: qty * price,
+        total_unit_price: price,
+        modifier_price: 0,
+        modifier_names: [],
+      };
+    })
+    .filter(Boolean);
+}
 
 const cart = {
   _state() {
     try {
       const raw = localStorage.getItem(CART_KEY);
-      if (!raw) return { items: {}, tip: 0, discount: 0, delivery: "DINE_IN" };
+      if (!raw) return { items: {}, tip: 0, discount: 0, delivery: "PICKUP" };
       const obj = JSON.parse(raw);
       if (!obj.items) obj.items = {};
       if (typeof obj.tip !== "number") obj.tip = 0;
       if (typeof obj.discount !== "number") obj.discount = 0;
-      if (!obj.delivery) obj.delivery = "DINE_IN";
+      if (!obj.delivery) obj.delivery = "PICKUP";
       return obj;
     } catch (e) {
-      return { items: {}, tip: 0, discount: 0, delivery: "DINE_IN" };
+      return { items: {}, tip: 0, discount: 0, delivery: "PICKUP" };
     }
   },
   _save(state) {
+    // Save new format
     localStorage.setItem(CART_KEY, JSON.stringify(state));
+    // Mirror to legacy "cart" array for older scripts (do NOT remove)
+    try {
+      const legacy = _stateToLegacyArray(state);
+      localStorage.setItem(LEGACY_CART_KEY, JSON.stringify(legacy));
+    } catch (e) {
+      console.warn("Failed to mirror cart to legacy key:", e);
+    }
     window.dispatchEvent(new CustomEvent("cart:change", { detail: { state } }));
   },
   clear() {
@@ -93,10 +155,15 @@ const cart = {
     this._save(s);
   },
   add(id, meta = {}, qty = 1) {
+    const qtyNum = Number(qty || 1);
+    if (qtyNum < 0) {
+      this.remove(id, Math.abs(qtyNum));
+      return;
+    }
+    const q = Math.max(1, qtyNum);
     const s = this._state();
     const key = String(id);
-    const q = Math.max(1, Number(qty || 1));
-    if (!s.items[key]) s.items[key] = { qty: 0, name: meta.name || "", price: Number(meta.price || 0), image: meta.image || null };
+    if (!s.items[key]) s.items[key] = { qty: 0, name: "", price: 0, image: null };
     s.items[key].qty = Number(s.items[key].qty || 0) + q;
     if (meta.price != null) s.items[key].price = Number(meta.price);
     if (meta.name) s.items[key].name = meta.name;
@@ -110,23 +177,18 @@ const cart = {
     if (!s.items[key]) return;
     const currentQty = Number(s.items[key].qty || 0);
     const next = currentQty - delta;
-    
-    // Only allow removal if it would result in quantity >= 1
-    // For complete removal, use a special high quantity (999) or call removeCompletely
-    if (next >= 1) {
-      s.items[key].qty = next;
-      this._save(s);
-    } else if (delta >= 999) {
-      // Allow complete removal only with high delta (999+)
+    if (next < 0) return;
+    if (next === 0) {
       delete s.items[key];
-      this._save(s);
+    } else {
+      s.items[key].qty = next;
     }
-    // Otherwise, do nothing - prevent quantity from going below 1
+    this._save(s);
   },
   setQty(id, qty) {
     const s = this._state();
     const key = String(id);
-    const n = Math.max(0, Number(qty || 0));
+    const n = Math.max(0, parseInt(qty || 0, 10));
     if (n === 0) {
       delete s.items[key];
     } else {
@@ -147,13 +209,12 @@ const cart = {
     }));
   },
   subtotal() {
-    return this.itemsArray().reduce((sum, it) => sum + (it.qty * it.price), 0);
+    return this.itemsArray().reduce((sum, it) => sum + it.qty * it.price, 0);
   },
   total() {
     const s = this._state();
     const sub = this.subtotal();
-    const total = Math.max(0, sub + Number(s.tip || 0) - Number(s.discount || 0));
-    return total;
+    return Math.max(0, sub + Number(s.tip || 0) - Number(s.discount || 0));
   },
   count() {
     return this.itemsArray().reduce((sum, it) => sum + it.qty, 0);
@@ -162,19 +223,15 @@ const cart = {
     const s = this._state();
     return {
       items: this.itemsArray(),
-      tip: Number(s.tip || 0),
-      discount: Number(s.discount || 0),
-      delivery: s.delivery || "DINE_IN",
       subtotal: this.subtotal(),
+      tip: s.tip || 0,
+      discount: s.discount || 0,
       total: this.total(),
+      delivery: s.delivery || "DINE_IN",
       count: this.count(),
     };
   },
 };
-
-/* ============================================================================
- * UI Bindings
- * ============================================================================ */
 
 function _closest(target, selector) {
   if (!target) return null;
@@ -184,19 +241,27 @@ function _closest(target, selector) {
 
 function renderCartBadges() {
   const snap = cart.snapshot();
-  
+
   // Update cart count in navigation
   const cartCount = document.getElementById("cart-count");
   if (cartCount) {
     cartCount.textContent = String(snap.count);
   }
-  
+
   // Update any data-cart-count elements
   document.querySelectorAll("[data-cart-count]").forEach((el) => {
     el.textContent = String(snap.count);
   });
+
+  // Update totals if present
   document.querySelectorAll("[data-cart-subtotal]").forEach((el) => {
     el.textContent = money(snap.subtotal);
+  });
+  document.querySelectorAll("[data-cart-tip]").forEach((el) => {
+    el.textContent = money(snap.tip);
+  });
+  document.querySelectorAll("[data-cart-discount]").forEach((el) => {
+    el.textContent = money(snap.discount);
   });
   document.querySelectorAll("[data-cart-total]").forEach((el) => {
     el.textContent = money(snap.total);
@@ -213,346 +278,437 @@ function bindCartButtons() {
       const id = addBtn.getAttribute("data-add");
       const name = addBtn.getAttribute("data-name") || "";
       const price = Number(addBtn.getAttribute("data-price") || 0);
-      const image = addBtn.getAttribute("data-image") || null;
-      
-      cart.add(id, { name, price, image }, 1);
-      
-      // Show feedback
-      const originalText = addBtn.textContent;
-      addBtn.textContent = "Added!";
-      addBtn.style.backgroundColor = "#10b981";
-      setTimeout(() => {
-        addBtn.textContent = originalText;
-        addBtn.style.backgroundColor = "";
-      }, 1000);
-      
+      const image = addBtn.getAttribute("data-image") || "";
+      const qtyInput = document.querySelector("[data-qty-input]");
+      const qty = qtyInput ? parseInt(qtyInput.value, 10) || 1 : 1;
+      cart.add(id, { name, price, image }, qty);
+      renderCartBadges();
       return;
     }
 
-    // Handle remove from cart buttons
-    const subBtn = _closest(ev.target, "[data-sub]");
-    if (subBtn) {
+    // Handle minus buttons
+    const minusBtn = _closest(ev.target, "[data-minus]");
+    if (minusBtn) {
       ev.preventDefault();
-      const id = subBtn.getAttribute("data-sub");
+      const id = minusBtn.getAttribute("data-minus");
       cart.remove(id, 1);
+      renderCartBadges();
       return;
     }
 
-    // Handle clear cart button
-    const clearBtn = _closest(ev.target, "[data-cart-clear]");
-    if (clearBtn) {
+    // Handle plus buttons
+    const plusBtn = _closest(ev.target, "[data-plus]");
+    if (plusBtn) {
       ev.preventDefault();
-      if (confirm("Clear your cart?")) {
-        cart.clear();
-      }
+      const id = plusBtn.getAttribute("data-plus");
+      cart.add(id, {}, 1);
+      renderCartBadges();
       return;
     }
 
-    // Handle delivery type buttons
-    const dineBtn = _closest(ev.target, "[data-delivery]");
-    if (dineBtn) {
+    // Handle remove buttons
+    const remBtn = _closest(ev.target, "[data-remove]");
+    if (remBtn) {
       ev.preventDefault();
-      cart.setDelivery(dineBtn.getAttribute("data-delivery") || "DINE_IN");
-      return;
-    }
-  });
-
-  // Handle quantity inputs and other form controls
-  document.addEventListener("change", (ev) => {
-    const qtyInput = _closest(ev.target, "[data-qty]");
-    if (qtyInput) {
-      const id = qtyInput.getAttribute("data-qty");
-      const qty = parseInt(qtyInput.value, 10);
-      cart.setQty(id, isNaN(qty) ? 0 : qty);
-      return;
-    }
-
-    if (ev.target && ev.target.matches && ev.target.matches("[data-tip]")) {
-      const val = Number(ev.target.value || 0);
-      cart.setTip(isNaN(val) ? 0 : val);
-      return;
-    }
-    if (ev.target && ev.target.matches && ev.target.matches("[data-discount]")) {
-      const val = Number(ev.target.value || 0);
-      cart.setDiscount(isNaN(val) ? 0 : val);
+      const id = remBtn.getAttribute("data-remove");
+      cart.setQty(id, 0);
+      renderCartBadges();
       return;
     }
   });
 }
 
-function renderCartTable() {
-  const tbody = document.querySelector("[data-cart-body]");
-  if (!tbody) return;
-  
-  const snap = cart.snapshot();
-  tbody.innerHTML = "";
-  
-  if (snap.items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Your cart is empty.</td></tr>';
-    renderCartBadges();
-    return;
-  }
-  
-  for (const it of snap.items) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="align-middle">
-        ${it.image ? `<img src="${it.image}" alt="" style="height:40px;width:40px;object-fit:cover;border-radius:6px;">` : ""}
-      </td>
-      <td class="align-middle">${it.name}</td>
-      <td class="align-middle">NPR ${money(it.price)}</td>
-      <td class="align-middle">
-        <div class="btn-group" role="group">
-          <button type="button" class="btn btn-outline-secondary" data-sub="${it.id}">−</button>
-          <input type="number" class="form-control text-center" style="width:80px" min="0" step="1" value="${it.qty}" data-qty="${it.id}">
-          <button type="button" class="btn btn-outline-secondary" data-add="${it.id}" data-name="${it.name}" data-price="${it.price}" ${it.image ? `data-image="${it.image}"` : ""}>＋</button>
-        </div>
-      </td>
-      <td class="align-middle fw-semibold">NPR ${money(it.line_total)}</td>
-    `;
-    tbody.appendChild(tr);
-  }
-  renderCartBadges();
-}
-
-function bindCartRendering() {
-  // Re-render badges + table whenever cart changes
-  window.addEventListener("cart:change", () => {
-    renderCartBadges();
-    renderCartTable();
-  });
-  // First paint
-  renderCartBadges();
-  renderCartTable();
-}
+bindCartButtons();
+renderCartBadges();
 
 /* ============================================================================
- * Navigation Auth Links Handler
- * ============================================================================ */
+ * Cart API helpers used by cart-render.js (shims; do NOT remove other funcs)
+ * ========================================================================== */
 
-function updateAuthNavigation(isAuthenticated) {
-  const navLogin = document.getElementById('nav-login');
-  const navLogout = document.getElementById('nav-logout');
-  const navOrders = document.getElementById('nav-orders');
-  
-  if (navLogin) navLogin.style.display = isAuthenticated ? 'none' : '';
-  if (navLogout) navLogout.style.display = isAuthenticated ? '' : 'none';
-  if (navOrders) navOrders.style.display = isAuthenticated ? '' : 'none';
-}
+// Client-authoritative cart operations with optimistic updates
+let _syncQueue = [];
+let _syncInProgress = false;
+let _syncSequence = 0;
 
-async function checkAuthStatus() {
-  try {
-    const { res, data } = await api('/session/ping/');
-    if (res.ok && data.is_auth) {
-      updateAuthNavigation(true);
-      return true;
-    } else {
-      updateAuthNavigation(false);
-      return false;
-    }
-  } catch (error) {
-    updateAuthNavigation(false);
-    return false;
-  }
-}
-
-/* ============================================================================
- * DOM Ready Handler
- * ============================================================================ */
-
-document.addEventListener('DOMContentLoaded', function() {
-  const navLogin = document.getElementById('nav-login');
-  const navLogout = document.getElementById('nav-logout');
-  
-  // Handle login button click
-  if (navLogin) {
-    navLogin.addEventListener('click', function(e) {
-      e.preventDefault();
-      if (window.__openAuthModal) {
-        window.__openAuthModal("choice");
-      }
-    });
-  }
-
-  // Handle logout button click  
-  if (navLogout) {
-    navLogout.addEventListener('click', async function(e) {
-      e.preventDefault();
-      try {
-        await api('/accounts/logout/', { method: 'POST' });
-        cart.clear();
-        updateAuthNavigation(false);
-        // Redirect to home if on protected page
-        if (window.location.pathname.includes('my-orders')) {
-          window.location.href = '/';
-        }
-      } catch (error) {
-        console.error('Logout failed:', error);
-      }
-    });
-  }
-
-  // Check auth status on page load
-  checkAuthStatus();
-
-  // Listen for auth events
-  window.addEventListener('auth:login', () => {
-    updateAuthNavigation(true);
-    checkAuthStatus(); // Refresh to make sure
-  });
-  
-  window.addEventListener('auth:logout', () => {
-    updateAuthNavigation(false);
-  });
-
-  // Initialize cart functionality
-  bindCartRendering();
-  bindCartButtons();
-});
-
-/* ============================================================================
- * Cart API functions for cart-render.js compatibility
- * ============================================================================ */
-async function cartApiAdd(id, qty = 1) {
-  console.log(`cartApiAdd called: id=${id}, qty=${qty}`);
-  
-  if (qty > 0) {
-    cart.add(id, {}, qty);
-  } else if (qty < 0) {
-    cart.remove(id, Math.abs(qty));
-  }
-  
-  // Re-render cart badges after update
-  renderCartBadges();
-  
-  // Sync with server
-  await syncCartWithServer();
-  
-  console.log('Cart updated, new count:', cart.count());
-}
-
-async function cartApiRemove(id, qty = 1) {
-  console.log(`cartApiRemove called: id=${id}, qty=${qty}`);
-  cart.remove(id, qty);
-  renderCartBadges();
-  
-  // Sync with server
-  await syncCartWithServer();
-  
-  console.log('Item removed, new count:', cart.count());
-}
-
-/* ============================================================================
- * Cart synchronization with server (delta-based; preserves modifiers/extras)
- * ============================================================================ */
-async function syncCartWithServer() {
-  try {
-    // local snapshot
-    const local = cart.snapshot();
-    const localMap = new Map(local.items.map(it => [Number(it.id), Number(it.qty)]));
-
-    // read server cart
-    let serverItems = [];
+if (typeof window.cartApiAdd !== "function") {
+  window.cartApiAdd = async function cartApiAdd(id, delta) {
     try {
-      const r = await fetch("/api/orders/cart/", { credentials: "include" });
-      if (r.ok) {
-        const data = await r.json();
-        serverItems = (data.items || []).map(it => ({ id: Number(it.id), quantity: Number(it.quantity || 0) }));
-      }
-    } catch (e) {
-      console.warn("Could not read server cart, proceeding with local-only sync", e);
-    }
-    const serverMap = new Map(serverItems.map(it => [Number(it.id), Number(it.quantity)]));
-
-    // compute deltas
-    const deltas = [];
-    for (const [id, lq] of localMap.entries()) {
-      const sq = serverMap.get(id) || 0;
-      const delta = lq - sq;
-      if (delta !== 0) deltas.push({ id, quantity: delta });
-      serverMap.delete(id);
-    }
-    // remove any items on server not in local
-    for (const [id, sq] of serverMap.entries()) {
-      if (sq > 0) deltas.push({ id, quantity: -sq });
-    }
-
-    // apply deltas (one-by-one to preserve modifiers on server)
-    for (const patch of deltas) {
-      await api("/api/orders/cart/items", {
-        method: "POST",
-        body: JSON.stringify(patch),
+      const n = Number(delta || 0);
+      
+      // OPTIMISTIC UPDATE: Update local cart immediately (client-authoritative)
+      if (n > 0) cart.add(id, {}, n);
+      else if (n < 0) cart.remove(id, Math.abs(n));
+      
+      // Update UI immediately
+      renderCartBadges();
+      window.dispatchEvent(new CustomEvent("cart:change"));
+      
+      // Queue server sync (non-blocking, debounced)
+      queueServerSync({
+        type: 'set',
+        id: id,
+        quantity: cart._state().items[id] ? cart._state().items[id].qty : 0,
+        sequence: ++_syncSequence
       });
+      
+      return { ok: true };
+    } catch (e) {
+      console.warn("cartApiAdd failed:", e);
+      return { ok: false };
     }
-  } catch (error) {
-    console.error('Failed to sync cart with server:', error);
-  }
+  };
+}
+
+if (typeof window.cartApiRemove !== "function") {
+  window.cartApiRemove = async function cartApiRemove(id, qty) {
+    try {
+      const n = Number(qty || 1);
+      
+      // OPTIMISTIC UPDATE: Update local cart immediately (client-authoritative)
+      if (n >= 999) cart.setQty(id, 0);
+      else cart.remove(id, n);
+      
+      // Update UI immediately
+      renderCartBadges();
+      window.dispatchEvent(new CustomEvent("cart:change"));
+      
+      // Queue server sync (non-blocking, debounced)
+      const newQty = cart._state().items[id] ? cart._state().items[id].qty : 0;
+      queueServerSync({
+        type: newQty === 0 ? 'delete' : 'set',
+        id: id,
+        quantity: newQty,
+        sequence: ++_syncSequence
+      });
+      
+      return { ok: true };
+    } catch (e) {
+      console.warn("cartApiRemove failed:", e);
+      return { ok: false };
+    }
+  };
 }
 
 /* ============================================================================
  * Cart API Get function for cart-render.js compatibility
- * ============================================================================ */
-async function cartApiGet() {
-  // Prefer server so we can show modifier_names/prices; fallback to local
-  try {
-    const r = await fetch("/api/orders/cart/", { credentials: "include" });
-    let serverData = { items: [] };
-    if (r.ok) {
-      serverData = await r.json();
+ * Uses DB cart endpoints from orders API, then falls back to local storage
+ * ========================================================================== */
+async function __cartApiGet_impl() {
+  const tryParse = async (res) => {
+    try {
+      return await res.json();
+    } catch {
+      return { items: [] };
     }
+  };
 
-    if (!serverData.items || serverData.items.length === 0) {
-      const cartSnapshot = cart.snapshot();
-      const items = cartSnapshot.items || [];
-      const formattedItems = items.map(item => ({
+  // 1) DB cart from orders API
+  try {
+    let r = await fetch("/api/cart/", { credentials: "include" });
+    let data = r.ok ? await tryParse(r) : { items: [] };
+    if (data && Array.isArray(data.items) && data.items.length) return data;
+  } catch (e) {
+    console.warn("DB cart fetch failed:", e);
+  }
+
+  // 3) Local new format
+  try {
+    const snap = cart.snapshot();
+    if (snap.items && snap.items.length) {
+      const items = snap.items.map((item) => ({
         id: parseInt(item.id),
         name: item.name || `Item ${item.id}`,
         quantity: item.qty || 0,
-        unit_price: Number(item.price || 0).toFixed(2),
-        total_unit_price: Number(item.price || 0).toFixed(2),
+        unit_price: item.price || 0,
+        line_total: (item.qty || 0) * (item.price || 0),
+        total_unit_price: item.price || 0,
         modifier_price: 0,
         modifier_names: [],
-        line_total: Number(item.qty || 0) * Number(item.price || 0),
-        image: item.image || null
       }));
       return {
-        items: formattedItems,
-        subtotal: formattedItems.reduce((sum, i) => sum + Number(i.line_total || 0), 0).toFixed(2),
-        meta: cartSnapshot
+        items,
+        subtotal: items.reduce((s, it) => s + (it.line_total || 0), 0).toFixed(2),
+        meta: snap,
       };
     }
-
-    return serverData;
-  } catch (error) {
-    console.error('Error in cartApiGet:', error);
-    // Fallback to local
-    const cartSnapshot = cart.snapshot();
-    const items = (cartSnapshot.items || []).map(item => ({
-      id: parseInt(item.id),
-      name: item.name || `Item ${item.id}`,
-      quantity: item.qty || 0,
-      unit_price: Number(item.price || 0).toFixed(2),
-      total_unit_price: Number(item.price || 0).toFixed(2),
-      modifier_price: 0,
-      modifier_names: [],
-      line_total: Number(item.qty || 0) * Number(item.price || 0),
-      image: item.image || null
-    }));
-    return {
-      items,
-      subtotal: items.reduce((sum, i) => sum + Number(i.line_total || 0), 0).toFixed(2),
-      meta: cartSnapshot
-    };
+  } catch (e) {
+    console.warn("cart_v1 snapshot failed:", e);
   }
+
+  // 4) Legacy array
+  try {
+    const legacyRaw = localStorage.getItem(LEGACY_CART_KEY);
+    if (legacyRaw) {
+      const legacyArr = JSON.parse(legacyRaw);
+      const formatted = _legacyArrayToFormattedItems(legacyArr);
+      if (formatted.length) {
+        return {
+          items: formatted,
+          subtotal: formatted.reduce((s, it) => s + (it.line_total || 0), 0).toFixed(2),
+          meta: { source: "legacy" },
+        };
+      }
+    }
+  } catch (e) {
+    console.warn("legacy cart parse failed:", e);
+  }
+
+  return { items: [] };
 }
 
 /* ============================================================================
  * Expose globals for compatibility
- * ============================================================================ */
-window.cart = cart;
-window.api = api;
-window.money = money;
-window.renderCartBadges = renderCartBadges;
-window.cartApiAdd = cartApiAdd;
-window.cartApiRemove = cartApiRemove;
-window.cartApiGet = cartApiGet;
+ * IMPORTANT: Do not override an existing window.cartApiGet (base.html defines one).
+ * ========================================================================== */
+window.cart = window.cart || cart;
+window.api = window.api || api;
+window.money = window.money || money;
+window.renderCartBadges = window.renderCartBadges || renderCartBadges;
+
+// Only set if not already defined elsewhere (e.g., base.html inline script)
+if (typeof window.cartApiGet !== "function") {
+  window.cartApiGet = __cartApiGet_impl;
+}
+
+/* ============================================================================
+ * Ordered, debounced server sync mechanism (prevents race conditions)
+ * ========================================================================== */
+
+let _syncTimer = null;
+
+// Queue server sync operations to prevent race conditions
+function queueServerSync(operation) {
+  _syncQueue.push(operation);
+  debounceServerSync();
+}
+
+function debounceServerSync(delay = 300) {
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(processServerSyncQueue, delay);
+}
+
+async function processServerSyncQueue() {
+  if (_syncInProgress || _syncQueue.length === 0) return;
+  
+  _syncInProgress = true;
+  const failedOperations = [];
+  
+  try {
+    // Process operations in sequence order to prevent conflicts
+    _syncQueue.sort((a, b) => a.sequence - b.sequence);
+    
+    // Group operations by item ID, keeping only the latest operation per item
+    const latestOps = new Map();
+    for (const op of _syncQueue) {
+      const existing = latestOps.get(op.id);
+      if (!existing || op.sequence > existing.sequence) {
+        latestOps.set(op.id, op);
+      }
+    }
+    
+    // Execute the latest operations
+    for (const [itemId, operation] of latestOps) {
+      try {
+        await executeServerSync(operation);
+      } catch (error) {
+        console.warn(`Server sync failed for item ${itemId}:`, error);
+        
+        // Add retry logic for certain types of errors
+        const shouldRetry = (
+          error.name === 'TypeError' && error.message.includes('fetch')
+        ) || (
+          error.message.includes('Server error (5')
+        );
+        
+        if (shouldRetry && (!operation.retryCount || operation.retryCount < 3)) {
+          operation.retryCount = (operation.retryCount || 0) + 1;
+          operation.retryDelay = Math.min(1000 * Math.pow(2, operation.retryCount - 1), 10000); // Exponential backoff
+          failedOperations.push(operation);
+          console.log(`Will retry operation in ${operation.retryDelay}ms (attempt ${operation.retryCount}/3)`);
+        } else {
+          console.error('Operation failed permanently:', operation, error);
+          // For critical errors, we might want to show a persistent notification
+          if (operation.retryCount >= 3) {
+            showCartNotification('Some cart changes could not be saved. Please refresh the page.', 'error');
+          }
+        }
+      }
+    }
+    
+    // Clear processed operations
+    _syncQueue = [];
+    
+    // Schedule retries for failed operations
+    failedOperations.forEach(operation => {
+      setTimeout(() => {
+        _syncQueue.unshift(operation); // Add back to front of queue
+        debounceServerSync(100); // Quick retry
+      }, operation.retryDelay);
+    });
+    
+  } finally {
+    _syncInProgress = false;
+    
+    // Process any new operations that were queued during sync
+    if (_syncQueue.length > 0) {
+      debounceServerSync(100);
+    }
+  }
+}
+
+// User notification helper
+function showCartNotification(message, type = 'info') {
+  // Try to use existing notification system if available
+  if (typeof window.showNotification === 'function') {
+    window.showNotification(message, type);
+    return;
+  }
+  
+  // Fallback: simple console notification
+  const prefix = type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️';
+  console.log(`${prefix} ${message}`);
+  
+  // Try to show in UI if there's a notification area
+  const notificationArea = document.querySelector('.notification-area, .alerts, .messages');
+  if (notificationArea) {
+    const div = document.createElement('div');
+    div.className = `alert alert-${type === 'error' ? 'danger' : type === 'warning' ? 'warning' : 'info'}`;
+    div.textContent = message;
+    div.style.cssText = 'margin: 10px 0; padding: 10px; border-radius: 4px; opacity: 0.9;';
+    notificationArea.appendChild(div);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+      if (div.parentNode) div.parentNode.removeChild(div);
+    }, 5000);
+  }
+}
+
+async function executeServerSync(operation) {
+  const { type, id, quantity } = operation;
+  
+  try {
+    let response;
+    
+    switch (type) {
+      case 'set':
+        if (quantity > 0) {
+          response = await jsonFetch("/api/cart/set_quantity/", {
+            method: "POST",
+            body: JSON.stringify({ menu_item_id: id, quantity: quantity }),
+          });
+        } else {
+          response = await jsonFetch("/api/cart/remove_item/", {
+            method: "POST",
+            body: JSON.stringify({ menu_item_id: id }),
+          });
+        }
+        break;
+        
+      case 'delete':
+        response = await jsonFetch("/api/cart/remove_item/", {
+          method: "POST",
+          body: JSON.stringify({ menu_item_id: id }),
+        });
+        break;
+        
+      case 'clear':
+        response = await jsonFetch("/api/cart/clear/", {
+          method: "POST",
+        });
+        break;
+        
+      default:
+        throw new Error(`Unknown sync operation type: ${type}`);
+    }
+    
+    // Check if response indicates an error
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessage = errorData.error || `Server error (${response.status})`;
+      const errorCode = errorData.code || 'UNKNOWN_ERROR';
+      
+      // Handle specific error codes
+      switch (errorCode) {
+        case 'MENU_ITEM_NOT_FOUND':
+          showCartNotification('This item is no longer available', 'warning');
+          break;
+        case 'QUANTITY_TOO_LARGE':
+          showCartNotification('Maximum quantity exceeded (999)', 'warning');
+          break;
+        case 'CART_ITEM_LIMIT':
+          showCartNotification('Cart is full (maximum 50 items)', 'warning');
+          break;
+        case 'INVALID_QUANTITY':
+          showCartNotification('Invalid quantity specified', 'error');
+          break;
+        default:
+          showCartNotification(`Cart sync failed: ${errorMessage}`, 'error');
+      }
+      
+      throw new Error(`${errorCode}: ${errorMessage}`);
+    }
+    
+  } catch (error) {
+    console.error('Cart sync error:', error);
+    
+    // Handle network errors
+    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      showCartNotification('Network error - changes will sync when connection is restored', 'warning');
+    } else if (!error.message.includes('Cart sync failed:')) {
+      // Only show generic error if we haven't already shown a specific one
+      showCartNotification('Failed to sync cart with server', 'error');
+    }
+    
+    // Re-throw to allow caller to handle if needed
+    throw error;
+  }
+}
+
+// Add cart clear function
+if (typeof window.cartApiClear !== "function") {
+  window.cartApiClear = async function cartApiClear() {
+    try {
+      // OPTIMISTIC UPDATE: Clear local cart immediately
+      cart.clear();
+      
+      // Update UI immediately
+      renderCartBadges();
+      window.dispatchEvent(new CustomEvent("cart:change"));
+      
+      // Queue server sync
+      queueServerSync({
+        type: 'clear',
+        sequence: ++_syncSequence
+      });
+      
+      return { ok: true };
+    } catch (e) {
+      console.warn("cartApiClear failed:", e);
+      return { ok: false };
+    }
+  };
+}
+
+// Legacy sync function for backward compatibility
+async function syncCartWithServer() {
+  try {
+    const snap = cart.snapshot();
+    if (snap.items && snap.items.length > 0) {
+      // Sync items to DB cart using add_item endpoint
+      for (const item of snap.items) {
+        await jsonFetch("/api/cart/items/add/", {
+          method: "POST",
+          body: JSON.stringify({ menu_item_id: item.id, quantity: item.qty }),
+        });
+      }
+    }
+  } catch (e) {
+    console.warn("Cart sync failed:", e);
+  }
+}
+
+// Remove automatic sync on cart:change to prevent conflicts
+// window.addEventListener("cart:change", () => {
+//   debounceSync(syncCartWithServer, 500);
+// });

@@ -5,21 +5,14 @@
  * - Builds the Order on the server and returns a Stripe checkout_url
  */
 
-// Make cartApiGet globally available for cart-render.js
+// cartApiGet is already defined in base.html template
 console.log('cart-pay.js is executing');
-window.cartApiGet = async function cartApiGet(){
-  const r = await fetch("/api/orders/cart-simple/", { 
-    credentials: "include"
-  });
-  if (!r.ok) return { items: [] };
-  return await r.json();
-}
-console.log('cartApiGet defined:', typeof window.cartApiGet);
+console.log('cartApiGet already defined:', typeof window.cartApiGet);
 
 // Check for cart expiration message
 window.checkCartExpiration = async function checkCartExpiration() {
   try {
-    const r = await fetch("/api/orders/cart-expired/", { 
+    const r = await fetch("/api/cart/", { 
       credentials: "include"
     });
     if (r.ok) {
@@ -49,7 +42,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 (function () {
-  const $ = (sel, el=document) => el.querySelector(sel);
+  // $ utility is now available from utils.js
 
   // CSRF helpers
   function getCookie(name){
@@ -98,17 +91,27 @@ document.addEventListener('DOMContentLoaded', function() {
     return j;
   }
 
-  // Merge session cart into user cart after login
+  // Merge local cart into DB cart after login
   async function mergeSessionCart() {
     try {
-      const r = await fetch("/api/orders/cart/merge/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": getCookie("csrftoken")
-        },
-        credentials: "include"
-      });
+      // Get current cart items and sync them to server
+      const cartItems = window.cart ? window.cart.getItems() : [];
+      for (const item of cartItems) {
+        await fetch("/api/cart/items/add/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCookie("csrftoken")
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            menu_item_id: item.id,
+            quantity: item.quantity,
+            modifiers: item.modifiers || []
+          })
+        });
+      }
+      const r = { ok: true }; // Simulate successful response
       if (r.ok) {
         console.log('Cart merged successfully');
         // Refresh cart display

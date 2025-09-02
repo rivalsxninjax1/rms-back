@@ -20,7 +20,7 @@
     </div>
 
     <div style="margin-top:12px;">
-      <a href="{% url 'storefront:my_orders' %}" class="btn">Go to My Orders</a>
+      <a href="{% url 'storefront:my-orders' %}" class="btn">Go to My Orders</a>
       <a href="{% url 'storefront:menu' %}" class="btn btn-secondary" style="margin-left:8px;">Continue Shopping</a>
     </div>
   </div>
@@ -30,7 +30,7 @@
   // ✅ Clear ONLY the cart after payment success
   try {
     // Clear server-side session cart keys (does not flush entire session)
-    fetch("/api/orders/cart/reset_session/", { method:"POST", credentials:"include" }).catch(()=>{});
+    fetch("/api/cart/clear/", { method:"POST", credentials:"include" }).catch(()=>{});
     // Clear any client-side mirror
     localStorage.removeItem("cart");
     localStorage.removeItem("applied_coupon");

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Order Alert</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .alert {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .order-details {
+            background-color: #fff;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .order-item:last-child {
+            border-bottom: none;
+        }
+        .urgent {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+            color: #721c24;
+        }
+        .total {
+            font-weight: bold;
+            font-size: 1.1em;
+            text-align: right;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #333;
+        }
+        .customer-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="alert{% if order.service_type == 'delivery' %} urgent{% endif %}">
+        <h1>🔔 NEW ORDER RECEIVED</h1>
+        <p><strong>Order #{{ order.order_number|default:order.id }}</strong></p>
+    </div>
+    
+    <div class="customer-info">
+        <h3>Customer Information</h3>
+        <p><strong>Name:</strong> {{ customer_name }}</p>
+        <p><strong>Service Type:</strong> {{ order.service_type|default:"Dine-in"|title }}</p>
+        <p><strong>Order Time:</strong> {{ order_time|date:"g:i A" }}</p>
+        {% if order.phone %}
+        <p><strong>Phone:</strong> {{ order.phone }}</p>
+        {% endif %}
+        {% if order.table_number %}
+        <p><strong>Table:</strong> {{ order.table_number }}</p>
+        {% endif %}
+        {% if order.special_instructions %}
+        <p><strong>Special Instructions:</strong> {{ order.special_instructions }}</p>
+        {% endif %}
+    </div>
+    
+    <div class="order-details">
+        <h3>Order Items</h3>
+        {% for item in order_items %}
+        <div class="order-item">
+            <div>
+                <strong>{{ item.menu_item.name }}</strong>
+                {% if item.modifiers.exists %}
+                <br><small style="color: #666;">+ 
+                {% for modifier in item.modifiers.all %}
+                    {{ modifier.name }}{% if not forloop.last %}, {% endif %}
+                {% endfor %}
+                </small>
+                {% endif %}
+                {% if item.special_instructions %}
+                <br><small style="color: #e74c3c;"><strong>Note:</strong> {{ item.special_instructions }}</small>
+                {% endif %}
+            </div>
+            <div>
+                <strong>{{ item.quantity }}x</strong>
+            </div>
+        </div>
+        {% empty %}
+        <p>No items found.</p>
+        {% endfor %}
+        
+        <div class="total">
+            Order Total: ${{ order.total }}
+        </div>
+    </div>
+    
+    <div style="text-align: center; margin-top: 20px; padding: 15px; background-color: #e9ecef; border-radius: 5px;">
+        <p><strong>⏰ Please prepare this order promptly!</strong></p>
+        <p style="font-size: 0.9em; color: #666;">Order received at {{ order_time|date:"F d, Y g:i A" }}</p>
+    </div>
+</body>
+</html>

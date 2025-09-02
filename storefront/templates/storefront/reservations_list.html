@@ -1,0 +1,28 @@
+{% extends "storefront/base.html" %}
+{% block title %}Reservations{% endblock %}
+{% block content %}
+<main class="container">
+  <h2>Reservations</h2>
+  {% if need_login %}
+    <p class="muted">Please log in to view your reservations.</p>
+    <script>window.dispatchEvent(new Event('auth:required'));</script>
+  {% else %}
+    {% if reservations %}
+    <div class="card" style="padding:12px">
+      {% for r in reservations %}
+        <div style="border-bottom:1px solid #24283a;padding:10px 0">
+          <div class="row" style="justify-content:space-between">
+            <div>Table {{ r.table.table_number }} · {{ r.location.name }}</div>
+            <div>{{ r.start_time|date:"Y-m-d H:i" }} → {{ r.end_time|date:"H:i" }}</div>
+          </div>
+          <div class="muted">Status: {{ r.status|title }}</div>
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+      <p class="muted">No reservations.</p>
+    {% endif %}
+  {% endif %}
+</main>
+{% endblock %}
+

@@ -1,0 +1,26 @@
+🔔 NEW ORDER RECEIVED 🔔
+
+Order #{{ order.order_number|default:order.id }}
+
+CUSTOMER INFORMATION:
+Name: {{ customer_name }}
+Service Type: {{ order.service_type|default:"Dine-in"|title }}
+Order Time: {{ order_time|date:"g:i A" }}
+{% if order.phone %}Phone: {{ order.phone }}{% endif %}
+{% if order.table_number %}Table: {{ order.table_number }}{% endif %}
+{% if order.special_instructions %}Special Instructions: {{ order.special_instructions }}{% endif %}
+
+ORDER ITEMS:
+{% for item in order_items %}
+- {{ item.quantity }}x {{ item.menu_item.name }}
+{% if item.modifiers.exists %}  + {% for modifier in item.modifiers.all %}{{ modifier.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}
+{% if item.special_instructions %}  NOTE: {{ item.special_instructions }}{% endif %}
+{% empty %}
+No items found.
+{% endfor %}
+
+ORDER TOTAL: ${{ order.total }}
+
+⏰ PLEASE PREPARE THIS ORDER PROMPTLY!
+
+Order received at {{ order_time|date:"F d, Y g:i A" }}

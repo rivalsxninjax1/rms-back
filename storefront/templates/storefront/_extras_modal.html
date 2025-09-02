@@ -1,0 +1,29 @@
+<div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+  <h3 style="margin:0">Edit Extras — {{ line.menu_item.name }}</h3>
+  <button class="btn" type="button" onclick="closeExtrasModal()">×</button>
+  <input type="hidden" id="extrasLineId" value="{{ line.id }}"/>
+</div>
+
+<div class="modal-body" style="max-height:60vh;overflow:auto">
+  {% for g in groups %}
+    <div style="margin:10px 0 12px">
+      <div style="font-weight:600">{{ g.name }} {% if g.is_required %}(required){% endif %}</div>
+      <div class="muted" style="font-size:12px;margin:4px 0">Select {{ g.min_selections }}{% if g.max_selections %}–{{ g.max_selections }}{% else %}+{% endif %}</div>
+      <div>
+        {% for m in g.modifiers.all %}
+          {% if m.is_available %}
+          <label style="display:block;margin:4px 0">
+            <input type="checkbox" class="extra-opt" value="{{ m.id }}" {% if m.id in selected_ids %}checked{% endif %}>
+            {{ m.name }} {% if m.price and m.price != 0 %}<span class="muted">(+₹ {{ m.price }})</span>{% endif %}
+          </label>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+  <button class="btn" type="button" onclick="closeExtrasModal()">Cancel</button>
+  <button class="btn primary" type="button" onclick="saveExtrasModal()">Save Extras</button>
+</div>

@@ -16,7 +16,7 @@ class MyOrdersAPIView(APIView):
 
     def get(self, request, *args, **kwargs):
         qs = (
-            Order.objects.filter(created_by=request.user)
+            Order.objects.filter(user=request.user)
             .select_related("payment")    # OneToOne, if payments app enabled
             .order_by("-created_at")
         )

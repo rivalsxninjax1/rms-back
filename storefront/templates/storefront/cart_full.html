@@ -1,0 +1,192 @@
+{% extends "storefront/base.html" %}
+{% block title %}Your Cart · Storefront{% endblock %}
+{% block content %}
+<main class="container">
+  <h2>Your Cart</h2>
+
+  <div id="cartItems">
+    {% include "storefront/_cart_items.html" with cart=cart %}
+  </div>
+
+  <div id="orderOptions" style="margin-top:16px">
+    {% include "storefront/_order_options.html" with cart=cart tables=tables %}
+  </div>
+
+  <div id="cartTotals" style="margin-top:16px">
+    {% include "storefront/_cart_totals.html" with cart=cart %}
+    <div class="card" style="padding:12px;margin-top:12px">
+      <form id="couponForm" class="js-ajax" action="{% url 'storefront:cart_coupon' %}" method="post">
+        {% csrf_token %}
+        <div class="row" style="gap:8px">
+          <input type="text" name="code" placeholder="Coupon code" style="flex:1"/>
+          <button class="btn">Apply Coupon</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="row" style="gap:10px;margin-top:16px">
+    <a class="btn" href="{% url 'storefront:menu_list' %}">Continue Shopping</a>
+    <form id="clearForm" class="js-ajax" action="{% url 'storefront:cart_clear' %}" method="post">
+      {% csrf_token %}
+      <button class="btn">Clear Cart</button>
+    </form>
+    <button class="btn primary" onclick="beginCheckout()">Pay</button>
+  </div>
+</main>
+<!-- Extras Modal -->
+<div id="extrasModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+  <div class="card" style="width:600px;max-width:94vw;max-height:80vh;overflow:hidden;padding:12px 12px 14px">
+    <div id="extrasModalContent"><!-- filled by HTMX --></div>
+  </div>
+  <div onclick="closeExtrasModal()" style="position:absolute;inset:0"></div>
+  <style>
+    #extrasModal .card { position:relative; z-index:1001; }
+    #extrasModal > div:last-child { z-index:1000; }
+  </style>
+</div>
+<!-- Table Select Modal -->
+<div id="tableModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center">
+  <div class="card" style="width:640px;max-width:96vw;max-height:80vh;overflow:hidden;padding:12px 12px 14px">
+    <div id="tableModalContent"><!-- filled by HTMX --></div>
+  </div>
+  <div onclick="closeTableModal()" style="position:absolute;inset:0"></div>
+  <style>
+    #tableModal .card { position:relative; z-index:1001; }
+    #tableModal > div:last-child { z-index:1000; }
+  </style>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  // All form handling centralized in base.js via delegated listener
+
+  async function postTableSelect(tableId){
+    const fd = new FormData();
+    fd.append('order_type','DINE_IN');
+    fd.append('table_ids', tableId || '');
+    fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+    const res = await fetch('{% url "storefront:cart_option" %}', {method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: fd});
+    const data = await res.json().catch(()=>null);
+    if (data && data.options){ document.getElementById('orderOptions').innerHTML = data.options; }
+    if (data && data.totals){ document.getElementById('cartTotals').innerHTML = data.totals; }
+    if (data && data.bar){ document.getElementById('cartbar').innerHTML = data.bar; }
+    refreshCart();
+  }
+
+  async function postTableSelectMulti(selectEl){
+    const ids = Array.from(selectEl.selectedOptions).map(o => o.value).join(',');
+    return postTableSelect(ids);
+  }
+
+  async function beginCheckout(){
+    try{
+      const res = await fetch('{% url "storefront:cart_checkout" %}', {method:'POST', headers:{'X-CSRFToken':'{{ csrf_token }}'}});
+      const data = await res.json();
+      if (!res.ok){
+        if (data && data.auth_required){ window._postAuthAction = 'checkout'; window.dispatchEvent(new Event('auth:required')); return; }
+        alert(data && data.error ? data.error : 'Unable to start checkout');
+        return;
+      }
+      if (data.redirect_url){ window.location.href = data.redirect_url; return; }
+      alert('Unable to start checkout.');
+    } catch(e){ console.error(e); alert('Checkout failed.'); }
+  }
+
+  function openExtrasModal(){
+    const m = document.getElementById('extrasModal');
+    m.style.display = 'flex';
+  }
+  function closeExtrasModal(){
+    const m = document.getElementById('extrasModal');
+    m.style.display = 'none';
+    document.getElementById('extrasModalContent').innerHTML = '';
+  }
+
+  function openTableModal(){
+    const m = document.getElementById('tableModal');
+    m.style.display = 'flex';
+  }
+  function closeTableModal(){
+    const m = document.getElementById('tableModal');
+    m.style.display = 'none';
+    document.getElementById('tableModalContent').innerHTML = '';
+  }
+
+  // Save handlers defined globally so injected modals can call them
+  async function saveExtrasModal(){
+    const lineIdEl = document.querySelector('#extrasModalContent #extrasLineId');
+    if (!lineIdEl) return;
+    const lineId = lineIdEl.value;
+    const ids = Array.from(document.querySelectorAll('#extrasModalContent .extra-opt:checked')).map(i => i.value).join(',');
+    const fd = new FormData();
+    fd.append('line_id', lineId);
+    fd.append('modifiers', ids);
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    try{
+      const res = await fetch('{% url "storefront:cart_extras" %}', { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: fd });
+      const data = await res.json().catch(()=>null);
+      if (data){
+        if (data.cart) document.getElementById('cartItems').innerHTML = data.cart;
+        if (data.totals) document.getElementById('cartTotals').innerHTML = data.totals;
+        if (data.bar) document.getElementById('cartbar').innerHTML = data.bar;
+      }
+    } catch(e){ console.error(e); }
+    closeExtrasModal();
+    refreshCart();
+  }
+
+  async function saveTableModal(){
+    const sel = document.querySelector('#tableModalContent #tableSelectList');
+    if (!sel) { closeTableModal(); return; }
+    const ids = Array.from(sel.selectedOptions).map(o => o.value).join(',');
+    const fd = new FormData();
+    fd.append('order_type','DINE_IN');
+    fd.append('table_ids', ids);
+    fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+    try{
+      const res = await fetch('{% url "storefront:cart_option" %}', { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: fd });
+      const data = await res.json().catch(()=>null);
+      if (data){
+        if (data.options) document.getElementById('orderOptions').innerHTML = data.options;
+        if (data.totals) document.getElementById('cartTotals').innerHTML = data.totals;
+        if (data.bar) document.getElementById('cartbar').innerHTML = data.bar;
+      }
+    } catch(e){ console.error(e); }
+    closeTableModal();
+    refreshCart();
+  }
+
+  // Load extras modal content (vanilla fetch)
+  async function loadExtrasModal(lineId){
+    try{
+      const url = '{% url "storefront:cart_extras_modal" %}?line_id=' + encodeURIComponent(lineId);
+      const res = await fetch(url, { headers: {'X-Requested-With':'XMLHttpRequest'} });
+      const html = await res.text();
+      document.getElementById('extrasModalContent').innerHTML = html;
+      openExtrasModal();
+    } catch(e){ console.error(e); }
+  }
+
+  // Load table selection modal content
+  async function loadTableModal(){
+    try{
+      const res = await fetch('{% url "storefront:cart_table_modal" %}', { headers: {'X-Requested-With':'XMLHttpRequest'} });
+      const html = await res.text();
+      document.getElementById('tableModalContent').innerHTML = html;
+      openTableModal();
+    } catch(e){ console.error(e); }
+  }
+
+  // Auto-seed tables from modal
+  async function seedTables(){
+    try{
+      const fd = new FormData();
+      fd.append('csrfmiddlewaretoken','{{ csrf_token }}');
+      const res = await fetch('{% url "storefront:cart_seed_tables" %}', { method:'POST', headers:{'X-Requested-With':'XMLHttpRequest'}, body: fd });
+      const html = await res.text();
+      document.getElementById('tableModalContent').innerHTML = html;
+    } catch(e){ console.error(e); }
+  }
+</script>
+{% endblock %}

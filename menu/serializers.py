@@ -1,125 +1,341 @@
-# menu/serializers.py
-from __future__ import annotations
-
 from decimal import Decimal
-from typing import Any, Optional
-
 from rest_framework import serializers
+from django.core.exceptions import ValidationError as DjangoValidationError
+
+from .models import MenuCategory, MenuItem, ModifierGroup, Modifier
 
 
-def _abs_url(request, url: Optional[str]) -> Optional[str]:
-    """Return an absolute URL if a request is available; otherwise the raw URL."""
-    if not url:
-        return None
-    if request is None:
-        return url
-    try:
-        return request.build_absolute_uri(url)
-    except Exception:
-        return url
-
-
-class MenuItemSerializer(serializers.Serializer):
+class ModifierSerializer(serializers.ModelSerializer):
     """
-    Minimal, stable shape used by storefront JS:
-
-      {
-        "id": 1,
-        "name": "Veg Momo",
-        "description": "Delicious…",
-        "price": "199.00",        # numeric-friendly string
-        "image": "https://…/media/menu_items/veg.jpg",
-        "category": {"id": 2, "name": "Momos"},
-        "is_vegetarian": true,
-        "is_available": true,
-        "preparation_time": 15
-      }
+    Clean serializer for modifiers with proper validation.
     """
-    id = serializers.IntegerField()
-    name = serializers.SerializerMethodField()
-    description = serializers.SerializerMethodField()
-    price = serializers.SerializerMethodField()
-    image = serializers.SerializerMethodField()
-    category = serializers.SerializerMethodField()
-    is_vegetarian = serializers.SerializerMethodField()
-    is_available = serializers.SerializerMethodField()
-    preparation_time = serializers.SerializerMethodField()
+    class Meta:
+        model = Modifier
+        fields = [
+            'id', 'name', 'description', 'price', 'is_available',
+            'sort_order', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def validate_price(self, value):
+        """Validate modifier price."""
+        if value < 0:
+            raise serializers.ValidationError("Price cannot be negative.")
+        if value > Decimal('999.99'):
+            raise serializers.ValidationError("Price cannot exceed $999.99.")
+        return value
+    
+    def validate_name(self, value):
+        """Validate modifier name."""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Name is required.")
+        if len(value.strip()) > 100:
+            raise serializers.ValidationError("Name cannot exceed 100 characters.")
+        return value.strip()
 
-    # ---------------- name / description / price ----------------
 
-    def get_name(self, obj: Any) -> str:
-        for f in ("name", "title"):
-            if hasattr(obj, f) and getattr(obj, f):
-                return str(getattr(obj, f))
-        return "Item"
+class ModifierGroupSerializer(serializers.ModelSerializer):
+    """
+    Clean serializer for modifier groups with nested modifiers.
+    """
+    modifiers = ModifierSerializer(many=True, read_only=True)
+    available_modifiers_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ModifierGroup
+        fields = [
+            'id', 'name', 'description', 'is_required', 'max_selections',
+            'min_selections', 'sort_order', 'modifiers', 'available_modifiers_count',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_available_modifiers_count(self, obj):
+        """Get count of available modifiers in this group."""
+        return obj.modifiers.filter(is_available=True).count()
+    
+    def validate_name(self, value):
+        """Validate modifier group name."""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Name is required.")
+        if len(value.strip()) > 100:
+            raise serializers.ValidationError("Name cannot exceed 100 characters.")
+        return value.strip()
+    
+    def validate_max_selections(self, value):
+        """Validate max selections."""
+        if value < 0:
+            raise serializers.ValidationError("Max selections cannot be negative.")
+        if value > 50:
+            raise serializers.ValidationError("Max selections cannot exceed 50.")
+        return value
+    
+    def validate_min_selections(self, value):
+        """Validate min selections."""
+        if value < 0:
+            raise serializers.ValidationError("Min selections cannot be negative.")
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        min_sel = attrs.get('min_selections', 0)
+        max_sel = attrs.get('max_selections', 0)
+        
+        if min_sel > max_sel and max_sel > 0:
+            raise serializers.ValidationError(
+                "Min selections cannot be greater than max selections."
+            )
+        
+        return attrs
 
-    def get_description(self, obj: Any) -> str:
-        for f in ("description", "details", "summary"):
-            if hasattr(obj, f) and getattr(obj, f):
-                return str(getattr(obj, f))
-        return ""
 
-    def get_price(self, obj: Any) -> str:
-        """
-        Return a Decimal-like value rendered as a numeric-friendly string.
-        The storefront uses Number(item.price) so strings like "12.00" are fine.
-        """
-        for f in ("price", "unit_price", "amount"):
-            if hasattr(obj, f):
-                val = getattr(obj, f)
-                # Normalize to Decimal, then to 2dp string
-                try:
-                    dec = Decimal(str(val))
-                    return f"{dec:.2f}"
-                except Exception:
-                    pass
-        return "0.00"
+class MenuCategorySerializer(serializers.ModelSerializer):
+    """
+    Clean serializer for menu categories.
+    """
+    available_items_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MenuCategory
+        fields = [
+            'id', 'name', 'description', 'is_active', 'sort_order',
+            'available_items_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_available_items_count(self, obj):
+        """Get count of available menu items in this category."""
+        return obj.menu_items.filter(is_available=True).count()
+    
+    def validate_name(self, value):
+        """Validate category name."""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Name is required.")
+        if len(value.strip()) > 100:
+            raise serializers.ValidationError("Name cannot exceed 100 characters.")
+        return value.strip()
 
-    # ---------------- image (absolute URL) ----------------
 
-    def get_image(self, obj: Any) -> Optional[str]:
-        request = self.context.get("request") if isinstance(self.context, dict) else None
-        # Try common image-like fields
-        for f in ("image", "photo", "picture", "thumbnail"):
-            if hasattr(obj, f):
-                val = getattr(obj, f)
-                # File/ImageField or plain string path
-                path = None
-                try:
-                    if val:
-                        if hasattr(val, "url"):
-                            path = val.url
-                        else:
-                            path = str(val)
-                except Exception:
-                    path = None
-                if path:
-                    return _abs_url(request, path)
-        return None
+class MenuItemSerializer(serializers.ModelSerializer):
+    """
+    Clean serializer for menu items with comprehensive details.
+    """
+    category = MenuCategorySerializer(read_only=True)
+    category_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    modifier_groups = ModifierGroupSerializer(many=True, read_only=True)
+    available_modifier_groups_count = serializers.SerializerMethodField()
+    dietary_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MenuItem
+        fields = [
+            'id', 'name', 'description', 'price', 'category', 'category_id',
+            'is_available', 'is_vegetarian', 'is_vegan', 'is_gluten_free',
+            'preparation_time', 'sort_order', 'modifier_groups',
+            'available_modifier_groups_count', 'dietary_info',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_available_modifier_groups_count(self, obj):
+        """Get count of modifier groups for this item."""
+        return obj.modifier_groups.count()
+    
+    def get_dietary_info(self, obj):
+        """Get dietary information as a list of tags."""
+        info = []
+        if obj.is_vegetarian:
+            info.append('Vegetarian')
+        if obj.is_vegan:
+            info.append('Vegan')
+        if obj.is_gluten_free:
+            info.append('Gluten-Free')
+        return info
+    
+    def validate_name(self, value):
+        """Validate menu item name."""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Name is required.")
+        if len(value.strip()) > 200:
+            raise serializers.ValidationError("Name cannot exceed 200 characters.")
+        return value.strip()
+    
+    def validate_price(self, value):
+        """Validate menu item price."""
+        if value < 0:
+            raise serializers.ValidationError("Price cannot be negative.")
+        if value > Decimal('9999.99'):
+            raise serializers.ValidationError("Price cannot exceed $9999.99.")
+        return value
+    
+    def validate_category_id(self, value):
+        """Validate category exists and is active."""
+        if value is not None:
+            try:
+                category = MenuCategory.objects.get(id=value)
+                if not category.is_active:
+                    raise serializers.ValidationError("Category is not active.")
+                return value
+            except MenuCategory.DoesNotExist:
+                raise serializers.ValidationError("Category does not exist.")
+        return value
+    
+    def validate_preparation_time(self, value):
+        """Validate preparation time."""
+        if value is not None:
+            if value < 1:
+                raise serializers.ValidationError("Preparation time must be at least 1 minute.")
+            if value > 480:
+                raise serializers.ValidationError("Preparation time cannot exceed 480 minutes.")
+        return value
+    
+    def create(self, validated_data):
+        """Create menu item with proper category assignment."""
+        category_id = validated_data.pop('category_id', None)
+        
+        menu_item = MenuItem.objects.create(**validated_data)
+        
+        if category_id:
+            category = MenuCategory.objects.get(id=category_id)
+            menu_item.category = category
+            menu_item.save()
+        
+        return menu_item
+    
+    def update(self, instance, validated_data):
+        """Update menu item with validation."""
+        category_id = validated_data.pop('category_id', None)
+        
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        if category_id is not None:
+            if category_id:
+                category = MenuCategory.objects.get(id=category_id)
+                instance.category = category
+            else:
+                instance.category = None
+        
+        instance.save()
+        return instance
 
-    # ---------------- category ----------------
 
-    def get_category(self, obj: Any) -> Optional[dict]:
-        """
-        Return minimal category info without assuming exact field names.
-        """
-        for f in ("category", "menu_category", "group"):
-            if hasattr(obj, f) and getattr(obj, f):
-                c = getattr(obj, f)
-                name = getattr(c, "name", None) or getattr(c, "title", None)
-                return {"id": getattr(c, "id", None), "name": name}
-        return None
+class MenuItemListSerializer(serializers.ModelSerializer):
+    """
+    Simplified serializer for menu item lists (better performance).
+    """
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    dietary_info = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MenuItem
+        fields = [
+            'id', 'name', 'description', 'price', 'category_name',
+            'is_available', 'is_vegetarian', 'is_vegan', 'is_gluten_free',
+            'dietary_info', 'preparation_time', 'sort_order'
+        ]
+        read_only_fields = ['id']
+    
+    def get_dietary_info(self, obj):
+        """Get dietary information as a list of tags."""
+        info = []
+        if obj.is_vegetarian:
+            info.append('Vegetarian')
+        if obj.is_vegan:
+            info.append('Vegan')
+        if obj.is_gluten_free:
+            info.append('Gluten-Free')
+        return info
 
-    # ---------------- flags / prep time ----------------
 
-    def get_is_vegetarian(self, obj: Any) -> bool:
-        return bool(getattr(obj, "is_vegetarian", False))
+class MenuItemDetailSerializer(MenuItemSerializer):
+    """
+    Detailed serializer for single menu item views with all relationships.
+    """
+    modifier_groups = ModifierGroupSerializer(many=True, read_only=True)
+    
+    class Meta(MenuItemSerializer.Meta):
+        fields = MenuItemSerializer.Meta.fields + ['modifier_groups']
 
-    def get_is_available(self, obj: Any) -> bool:
-        return bool(getattr(obj, "is_available", True))
 
-    def get_preparation_time(self, obj: Any) -> int:
-        try:
-            return int(getattr(obj, "preparation_time", 15) or 15)
-        except Exception:
-            return 15
+class MenuCategoryWithItemsSerializer(MenuCategorySerializer):
+    """
+    Category serializer with nested menu items for menu display.
+    """
+    menu_items = MenuItemListSerializer(source='items', many=True, read_only=True)
+    
+    class Meta(MenuCategorySerializer.Meta):
+        fields = MenuCategorySerializer.Meta.fields + ['menu_items']
+    
+    def to_representation(self, instance):
+        """Filter to only show available items."""
+        data = super().to_representation(instance)
+        # Only show available items in the menu display
+        available_items = [item for item in data['menu_items'] if item['is_available']]
+        data['menu_items'] = available_items
+        return data
+
+
+class MenuDisplaySerializer(serializers.Serializer):
+    """
+    Serializer for complete menu display with categories and items.
+    """
+    categories = MenuCategoryWithItemsSerializer(many=True, read_only=True)
+    featured_items = MenuItemListSerializer(many=True, read_only=True)
+    total_categories = serializers.IntegerField(read_only=True)
+    total_items = serializers.IntegerField(read_only=True)
+    last_updated = serializers.DateTimeField(read_only=True)
+    
+    def to_representation(self, instance):
+        """Custom representation for menu display."""
+        # instance should be a dict with menu data
+        return {
+            'categories': instance.get('categories', []),
+            'featured_items': instance.get('featured_items', []),
+            'total_categories': instance.get('total_categories', 0),
+            'total_items': instance.get('total_items', 0),
+            'last_updated': instance.get('last_updated')
+        }
+
+
+class MenuSearchSerializer(serializers.Serializer):
+    """
+    Serializer for menu search functionality.
+    """
+    query = serializers.CharField(max_length=200, required=True)
+    category_id = serializers.IntegerField(required=False, allow_null=True)
+    is_vegan = serializers.BooleanField(required=False)
+    is_gluten_free = serializers.BooleanField(required=False)
+    min_price = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, min_value=0)
+    max_price = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, min_value=0)
+    
+    def validate_query(self, value):
+        """Validate search query."""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Search query cannot be empty.")
+        if len(value.strip()) < 2:
+            raise serializers.ValidationError("Search query must be at least 2 characters.")
+        return value.strip()
+    
+    def validate_category_id(self, value):
+        """Validate category exists."""
+        if value is not None:
+            try:
+                MenuCategory.objects.get(id=value, is_active=True)
+                return value
+            except MenuCategory.DoesNotExist:
+                raise serializers.ValidationError("Category does not exist or is not active.")
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation."""
+        min_price = attrs.get('min_price')
+        max_price = attrs.get('max_price')
+        
+        if min_price is not None and max_price is not None:
+            if min_price > max_price:
+                raise serializers.ValidationError(
+                    "Min price cannot be greater than max price."
+                )
+        
+        return attrs

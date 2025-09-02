@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rms_network
+
+  celery_worker:
+    build: .
+    command: >
+      sh -c "python manage.py migrate &&
+             celery -A rms_backend worker 
+             --loglevel=info 
+             --concurrency=4 
+             --queues=default,post_payment,emails,pos_sync,analytics,loyalty,inventory"
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///db.sqlite3}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-in-production}
+      - EMAIL_HOST=${EMAIL_HOST:-}
+      - EMAIL_HOST_USER=${EMAIL_HOST_USER:-}
+      - EMAIL_HOST_PASSWORD=${EMAIL_HOST_PASSWORD:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - rms_network
+    restart: unless-stopped
+
+  celery_beat:
+    build: .
+    command: >
+      sh -c "celery -A rms_backend beat 
+             --loglevel=info 
+             --scheduler=django_celery_beat.schedulers:DatabaseScheduler"
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///db.sqlite3}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-in-production}
+    depends_on:
+      - redis
+      - celery_worker
+    networks:
+      - rms_network
+    restart: unless-stopped
+
+  flower:
+    build: .
+    command: >
+      sh -c "celery -A rms_backend flower 
+             --port=5555 
+             --broker=redis://redis:6379/0"
+    ports:
+      - "5555:5555"
+    volumes:
+      - .:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+      - celery_worker
+    networks:
+      - rms_network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+
+networks:
+  rms_network:
+    driver: bridge

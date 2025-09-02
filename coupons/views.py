@@ -67,11 +67,19 @@ def apply_coupon_to_order_view(request):
 
     order = get_object_or_404(Order, pk=order_id)
     c = find_active_coupon(code)
-    ok, discount, reason = compute_discount_for_order(order, c, request.user)
+    discount_amount, breakdown = compute_discount_for_order(
+        coupon=c,
+        order_total=order.total,
+        item_count=1,
+        user=request.user,
+        is_first_order=False
+    )
+    ok = discount_amount > 0
+    reason = "Coupon applied successfully" if ok else "No discount available"
     if not ok:
         return JsonResponse({"ok": False, "message": reason}, status=400)
 
     order.discount_code = c.code
-    order.discount_amount = discount
+    order.discount_amount = discount_amount
     order.save(update_fields=["discount_code", "discount_amount"])
-    return JsonResponse({"ok": True, "message": f"Applied {c.code} (-{c.percent}%)", "discount": str(discount)})
+    return JsonResponse({"ok": True, "message": f"Applied {c.code} (-{c.percent}%)", "discount": str(discount_amount)})
