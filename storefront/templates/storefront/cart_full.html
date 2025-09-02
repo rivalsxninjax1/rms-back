@@ -81,14 +81,25 @@
 
   async function beginCheckout(){
     try{
-      const res = await fetch('{% url "storefront:cart_checkout" %}', {method:'POST', headers:{'X-CSRFToken':'{{ csrf_token }}'}});
-      const data = await res.json();
+      const res = await fetch('{% url "storefront:cart_checkout" %}', {
+        method:'POST',
+        headers:{'X-CSRFToken':'{{ csrf_token }}','X-Requested-With':'XMLHttpRequest'},
+        credentials:'same-origin',
+      });
+      let data = null; const ct = res.headers.get('content-type')||'';
+      if (ct.includes('application/json')){ data = await res.json().catch(()=>null); }
       if (!res.ok){
-        if (data && data.auth_required){ window._postAuthAction = 'checkout'; window.dispatchEvent(new Event('auth:required')); return; }
+        // Prompt auth on 401, or if whoami says not authenticated
+        if ((data && data.auth_required) || res.status === 401){ window._postAuthAction='checkout'; window.dispatchEvent(new Event('auth:required')); return; }
+        try{
+          const w = await fetch('{% url "accounts:whoami" %}', {headers:{'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin'});
+          const wj = await w.json().catch(()=>({}));
+          if (!wj.is_auth){ window._postAuthAction='checkout'; window.dispatchEvent(new Event('auth:required')); return; }
+        }catch(_){ /* ignore */ }
         alert(data && data.error ? data.error : 'Unable to start checkout');
         return;
       }
-      if (data.redirect_url){ window.location.href = data.redirect_url; return; }
+      if (data && data.redirect_url){ window.location.href = data.redirect_url; return; }
       alert('Unable to start checkout.');
     } catch(e){ console.error(e); alert('Checkout failed.'); }
   }

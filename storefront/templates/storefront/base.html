@@ -130,17 +130,19 @@
     function toggleAuthMode(){ const r=document.getElementById('registerForm'); return setAuthMode(r.style.display==='none'?'register':'login'); }
     async function submitLogin(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), password:f.password.value }; if(!payload.username||!payload.password){return}
       try{
-        const res = await fetch('{% url "accounts:login_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken()}, body: JSON.stringify(payload)});
-        const data = await res.json(); if(!res.ok){ alert(data && data.detail ? data.detail : 'Login failed'); return; }
+        const res = await fetch('{% url "accounts:login_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken(),'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin', body: JSON.stringify(payload)});
+        let data = null; const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')){ data = await res.json().catch(()=>null); }
+        if(!res.ok){ alert(data && data.detail ? data.detail : 'Login failed'); return; }
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
       } catch(e){ console.error(e); alert('Login failed'); }
       return false;
     }
-    async function submitRegister(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), email:f.email.value.trim(), password:f.password.value }; if(!payload.username||!payload.password){return}
+    async function submitRegister(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), email:(f.email?.value||'').trim(), password:f.password.value }; if(!payload.username||!payload.password){return}
       try{
-        const res = await fetch('{% url "accounts:register_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken()}, body: JSON.stringify(payload)});
-        const data = await res.json(); if(!res.ok){ alert(data && data.detail ? data.detail : 'Registration failed'); return; }
+        const res = await fetch('{% url "accounts:register_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken(),'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin', body: JSON.stringify(payload)});
+        let data = null; const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')){ data = await res.json().catch(()=>null); }
+        if(!res.ok){ alert(data && data.detail ? data.detail : 'Registration failed'); return; }
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
       } catch(e){ console.error(e); alert('Registration failed'); }
