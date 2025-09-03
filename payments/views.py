@@ -340,6 +340,36 @@ def checkout(request: HttpRequest) -> JsonResponse:
 
 
 # -----------------------------------------------------------------------------
+# Checkout landing pages (used by payments.services success/cancel)
+# -----------------------------------------------------------------------------
+@require_http_methods(["GET"])
+def checkout_success(request: HttpRequest) -> HttpResponse:
+    """Simple success page after Stripe redirects back.
+    If webhooks are configured, the order/payment will be finalized there.
+    """
+    context: Dict[str, Any] = {"order": None, "invoice_url": None}
+    # Optionally, if we ever include session_id in success_url, we could fetch more details here.
+    try:
+        from orders.models import Order as CoreOrder
+        user = getattr(request, "user", None)
+        if user and getattr(user, "is_authenticated", False):
+            last_order = CoreOrder.objects.filter(user=user).order_by("-created_at").first()
+            context["order"] = last_order
+    except Exception:
+        pass
+    # Render a lightweight template (present in payments/templates)
+    from django.shortcuts import render
+    return render(request, "payments/checkout_success.html", context)
+
+
+@require_http_methods(["GET"])
+def checkout_cancel(request: HttpRequest) -> HttpResponse:
+    """Redirect back to cart when user cancels on Stripe."""
+    from django.shortcuts import redirect
+    return redirect("storefront:cart_full")
+
+
+# -----------------------------------------------------------------------------
 # Webhook (marks orders as paid)
 # -----------------------------------------------------------------------------
 

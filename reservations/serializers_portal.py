@@ -32,19 +32,24 @@ class CreateReservationSerializer(serializers.Serializer):
         return attrs
 
     def create(self, validated):
+        from django.utils import timezone
+        from datetime import datetime, timedelta
         request = self.context["request"]
         user = request.user
         table = Table.objects.get(pk=validated["table_id"])
-        # Let your model default the status (often 'PENDING' or 'CONFIRMED')
+        # Combine date + time; make aware in current timezone
+        naive = datetime.combine(validated["date"], validated["time"]).replace(second=0, microsecond=0)
+        start = timezone.make_aware(naive, timezone.get_current_timezone()) if timezone.is_naive(naive) else naive
+        end = start + timedelta(minutes=90)
         res = Reservation.objects.create(
+            location=table.location,
             table=table,
-            customer_name=validated["customer_name"],
-            customer_phone=validated["customer_phone"],
-            customer_email=validated.get("customer_email", ""),
+            guest_name=validated["customer_name"],
+            guest_phone=validated["customer_phone"],
             party_size=validated["party_size"],
-            reservation_date=validated["date"],
-            reservation_time=validated["time"],
-            notes=validated.get("notes", ""),
+            start_time=start,
+            end_time=end,
+            note=validated.get("notes", ""),
             created_by=user,
         )
         return res
@@ -53,8 +58,8 @@ class ReservationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Reservation
         fields = [
-            "id","table","customer_name","customer_phone","customer_email",
-            "party_size","reservation_date","reservation_time",
-            "status","notes","created_by","created_at","updated_at",
+            "id", "location", "table", "guest_name", "guest_phone", "party_size",
+            "start_time", "end_time", "reservation_date", "status", "note",
+            "created_by", "created_at",
         ]
-        read_only_fields = ["created_by","created_at","updated_at"]
+        read_only_fields = ["created_by", "created_at", "reservation_date"]

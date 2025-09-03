@@ -206,13 +206,30 @@ def create_checkout_session(order: Order):
         **(discounts_param or {}),
     )
 
-    # Update Payment record if present
+    # Update Payment record if present (tolerate schema differences)
     try:
-        pay, _ = Payment.objects.get_or_create(order=order, defaults={"provider": getattr(Payment, "PROVIDER_STRIPE", "stripe")})
-        pay.stripe_session_id = session.get("id")
-        pay.stripe_checkout_url = session.get("url")
-        pay.currency = _currency()
-        pay.save(update_fields=["stripe_session_id", "stripe_checkout_url", "currency"])
+        pay, _ = Payment.objects.get_or_create(order=order)
+        # Dynamically set available fields only
+        update_fields = []
+        if hasattr(pay, "stripe_session_id"):
+            setattr(pay, "stripe_session_id", session.get("id"))
+            update_fields.append("stripe_session_id")
+        if hasattr(pay, "stripe_checkout_url"):
+            setattr(pay, "stripe_checkout_url", session.get("url"))
+            update_fields.append("stripe_checkout_url")
+        if hasattr(pay, "currency"):
+            setattr(pay, "currency", _currency())
+            update_fields.append("currency")
+        if hasattr(pay, "amount"):
+            try:
+                amt = getattr(order, "total_amount", None) or getattr(order, "total", None)
+                if amt is not None:
+                    setattr(pay, "amount", amt)
+                    update_fields.append("amount")
+            except Exception:
+                pass
+        if update_fields:
+            pay.save(update_fields=update_fields)
     except Exception:
         logger.exception("Failed to link Payment to Stripe Session for order %s", order.id)
 

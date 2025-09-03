@@ -103,7 +103,7 @@
     };
     const res = await fetch("/reserve/api/reservations/", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
       credentials: "include",
       body: JSON.stringify(payload),
     });

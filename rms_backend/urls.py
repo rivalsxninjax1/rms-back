@@ -36,6 +36,8 @@ urlpatterns = [
 
     # Payments (Stripe checkout + webhook)
     path("payments/", include(("payments.urls", "payments"), namespace="payments")),
+    # Reservation portal (interactive booking UI)
+    path("reserve/", include(("reservations.urls_portal", "reservations_portal"), namespace="reservations_portal")),
 
     # ---- Comprehensive REST APIs ----
     # New comprehensive DRF APIs with full CRUD operations

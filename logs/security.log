@@ -2,3 +2,15 @@ WARNING 2025-09-02 09:10:11,686 log 53579 6138294272 Forbidden (CSRF token from 
 WARNING 2025-09-02 09:10:32,650 log 53579 6155120640 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header has incorrect length.): /accounts/register/
 WARNING 2025-09-02 09:16:58,254 log 53579 6138294272 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header has incorrect length.): /accounts/register/
 WARNING 2025-09-02 12:34:08,652 log 15126 6197899264 Forbidden (CSRF token from POST has incorrect length.): /admin/login/
+WARNING 2025-09-03 07:02:54,929 log 2105 6218084352 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:11:30,014 log 3305 6204485632 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:27:47,987 log 4527 6159364096 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/merge-session/
+WARNING 2025-09-03 07:27:48,002 log 4527 6176190464 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:27:54,902 log 4527 6159364096 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:41:06,767 log 4789 6133002240 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/merge-session/
+WARNING 2025-09-03 07:41:06,784 log 4789 6149828608 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:41:27,270 log 4789 6149828608 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:41:42,950 log 4789 6149828608 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:41:51,954 log 4789 6149828608 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:44:25,954 log 4789 6133002240 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/checkout/
+WARNING 2025-09-03 07:50:01,436 log 5240 6196932608 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /cart/merge-session/

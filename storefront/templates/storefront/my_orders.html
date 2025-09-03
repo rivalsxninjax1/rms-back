@@ -13,7 +13,7 @@
         <div style="border-bottom:1px solid #24283a;padding:10px 0">
           <div class="row" style="justify-content:space-between">
             <div>#{{ o.order_number|default:o.id }} · {{ o.created_at|date:"Y-m-d H:i" }}</div>
-            <div><strong>₹ {{ o.total_amount|default:o.total }}</strong></div>
+            <div><strong>₹ {{ o.total_amount }}</strong></div>
           </div>
           <div class="muted">{{ o.get_status_display|default:o.status }}</div>
           <div class="muted">{{ o.items.count }} item(s)</div>
@@ -26,4 +26,3 @@
   {% endif %}
 </main>
 {% endblock %}
-

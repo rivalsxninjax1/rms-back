@@ -32,3 +32,21 @@
     </div>
   {% endif %}
 </div>
+
+<!-- Coupon entry just below Order Options -->
+<div class="card" style="padding:12px;margin-top:12px">
+  <h4>Have a Coupon?</h4>
+  <form class="row js-ajax" action="{% url 'storefront:cart_coupon' %}" method="post" style="gap:8px;align-items:center;margin-top:8px">
+    {% csrf_token %}
+    <input type="text" name="code" placeholder="Enter coupon code" style="flex:1;min-width:200px"/>
+    <button class="btn">Apply</button>
+  </form>
+  {% if cart.applied_coupon_code %}
+    <div class="muted" style="margin-top:8px">
+      Applied coupon: <strong>{{ cart.applied_coupon_code }}</strong>
+      {% if cart.coupon_discount and cart.coupon_discount|floatformat != '0.00' %}
+        &nbsp;·&nbsp; Discount: <strong>₹ {{ cart.coupon_discount }}</strong>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>

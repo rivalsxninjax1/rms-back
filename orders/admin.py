@@ -103,6 +103,8 @@ class OrderAdmin(admin.ModelAdmin):
         "items_subtotal_admin",
         "tip_amount",
         "discount_amount",
+        "coupon_discount",
+        "applied_coupon_code",
         "grand_total_admin",
         "created_at",
         "invoice_link",
@@ -113,7 +115,13 @@ class OrderAdmin(admin.ModelAdmin):
     search_fields = ("=id", "user__username")
     raw_id_fields = ("user",)
     ordering = ("-created_at",)
-    readonly_fields = tuple(f for f in ("invoice_pdf",) if hasattr(Order, "invoice_pdf"))
+    # Only include fields that actually exist on orders.Order
+    _ro = []
+    if hasattr(Order, "invoice_pdf"):
+        _ro.append("invoice_pdf")
+    if hasattr(Order, "applied_coupon_code"):
+        _ro.append("applied_coupon_code")
+    readonly_fields = tuple(_ro)
 
     # Avoid N+1 (items + menu_item + user + dine_in_table)
     def get_queryset(self, request):

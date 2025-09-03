@@ -12,11 +12,13 @@ from django.shortcuts import render, get_object_or_404
 from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.csrf import csrf_exempt
 
 from menu.models import MenuItem, MenuCategory, Modifier, ModifierGroup
 from core.models import Table, Organization, Location
 from orders.models import Cart, CartItem, Order
 from orders.utils.cart import get_or_create_cart
+from orders.utils.cart import merge_carts
 from coupons.services import find_active_coupon, compute_discount_for_order
 from payments.services import create_checkout_session
 from core.seed import seed_default_tables
@@ -359,8 +361,8 @@ def cart_tip(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"ok": True, "totals": html_cart, "bar": html_bar})
     return HttpResponseRedirect(reverse('storefront:cart_full'))
 
+@csrf_exempt  # Avoid CSRF issues for AJAX checkout POST
 @require_POST
-@transaction.atomic
 def cart_checkout(request: HttpRequest) -> HttpResponse:
     cart = _cart_or_404(request)
     if hasattr(cart, "is_expired") and cart.is_expired():
@@ -372,8 +374,27 @@ def cart_checkout(request: HttpRequest) -> HttpResponse:
 
     cart.calculate_totals(); cart.save()
     order = Order.create_from_cart(cart)
+    # Persist coupon as OrderExtras for Stripe discount logic (payments.services)
+    try:
+        from engagement.models import OrderExtras
+        if getattr(order, "coupon_discount", 0):
+            OrderExtras.objects.update_or_create(
+                order=order,
+                name="coupon_discount",
+                defaults={"amount": order.coupon_discount},
+            )
+    except Exception:
+        pass
     session = create_checkout_session(order)
-    return JsonResponse({"ok": True, "redirect_url": session.get("url", "")})
+    redirect_url = ""
+    try:
+        # Stripe SDK returns an object with attribute access
+        redirect_url = getattr(session, "url", "")
+        if not redirect_url and isinstance(session, dict):
+            redirect_url = session.get("url", "")
+    except Exception:
+        redirect_url = ""
+    return JsonResponse({"ok": True, "redirect_url": redirect_url})
 
 @require_POST
 @transaction.atomic
@@ -388,6 +409,34 @@ def cart_clear(request: HttpRequest) -> HttpResponse:
         html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
         return JsonResponse({"ok": True, "cart": html_cart, "totals": html_totals, "bar": html_bar})
     return HttpResponseRedirect(reverse('storefront:cart_full'))
+
+
+@csrf_exempt
+@require_POST
+def cart_merge_session(request: HttpRequest) -> HttpResponse:
+    """If authenticated, merge any active session cart into the user's cart.
+    No-op for guests. Returns JSON suitable for AJAX.
+    """
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated:
+        return JsonResponse({"ok": False, "detail": "auth required"}, status=401)
+    # Find a guest cart tied to current session
+    guest = (
+        Cart.objects.filter(session_key=request.session.session_key, user__isnull=True, status=Cart.STATUS_ACTIVE)
+        .order_by("-updated_at")
+        .first()
+    )
+    # Get/create user cart
+    user_cart = get_or_create_cart(request).cart
+    if not guest or guest.pk == user_cart.pk:
+        return JsonResponse({"ok": True, "merged": False})
+    try:
+        stats = merge_carts(guest, user_cart)
+    except Exception:
+        stats = {"moved": 0, "merged": 0, "created": 0}
+    # Return refreshed bar HTML for convenience
+    html_bar = render_to_string("storefront/_cart_bar.html", {"cart": user_cart}, request=request)
+    return JsonResponse({"ok": True, "merged": True, "stats": stats, "bar": html_bar})
 
 
 @require_POST
@@ -521,7 +570,34 @@ def cart_coupon(request: HttpRequest) -> HttpResponse:
     if _is_htmx(request):
         html_totals = render_to_string("storefront/_cart_totals.html", {"cart": cart}, request=request)
         html_bar = render_to_string("storefront/_cart_bar.html", {"cart": cart}, request=request)
-        return JsonResponse({"ok": True, "totals": html_totals, "bar": html_bar, "code": coupon.code, "discount": str(discount)})
+        # Also refresh order options panel so the coupon section reflects applied code
+        # Recompute selected table ids similarly to cart_full/cart_option
+        _ensure_min_tables()
+        tables = Table.objects.filter(is_active=True).order_by("location_id", "table_number")
+        sel_ids = []
+        if cart.table_id:
+            sel_ids.append(cart.table_id)
+        try:
+            if isinstance(cart.metadata, dict):
+                extra = cart.metadata.get("tables") or []
+                for tid in extra:
+                    if isinstance(tid, int) and tid not in sel_ids:
+                        sel_ids.append(tid)
+        except Exception:
+            pass
+        html_opts = render_to_string(
+            "storefront/_order_options.html",
+            {"cart": cart, "tables": tables, "sel_table_ids": sel_ids},
+            request=request,
+        )
+        return JsonResponse({
+            "ok": True,
+            "totals": html_totals,
+            "bar": html_bar,
+            "options": html_opts,
+            "code": coupon.code,
+            "discount": str(discount)
+        })
     return HttpResponseRedirect(reverse('storefront:cart_full'))
 
 

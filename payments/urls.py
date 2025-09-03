@@ -32,4 +32,8 @@ urlpatterns = [
     # Legacy endpoints for backward compatibility
     path('checkout/', views.checkout, name='checkout'),
     path('webhook-legacy/', views.webhook, name='webhook_legacy'),
+
+    # Success/Cancel landing pages used by Stripe Checkout
+    path('checkout-success/', views.checkout_success, name='checkout-success'),
+    path('checkout-cancel/', views.checkout_cancel, name='checkout-cancel'),
 ]

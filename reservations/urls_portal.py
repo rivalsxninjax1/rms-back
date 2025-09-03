@@ -4,10 +4,12 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.utils import timezone
+import json
 # Resolve models lazily from the app registry to avoid circular imports.
 from django.apps import apps as _apps
 
-Table = _apps.get_model("reservations", "Table")
+# Table model lives in core app
+Table = _apps.get_model("core", "Table")
 ReservationHold = _apps.get_model("engagement", "ReservationHold")
 
 app_name = "reservations_portal"

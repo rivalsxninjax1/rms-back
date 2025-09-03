@@ -33,8 +33,11 @@
     <div class="container row" style="justify-content:space-between">
       <div class="row" style="gap:12px">
         <a href="{% url 'storefront:menu_list' %}">🍽️ Storefront</a>
-        <a href="{% url 'storefront:my_orders' %}">My Orders</a>
-        <a href="{% url 'storefront:reservations_list' %}">Reservations</a>
+        <a href="#" onclick="return navReserve()">Reserve Table</a>
+        {% if user.is_authenticated %}
+          <a href="{% url 'storefront:my_orders' %}">My Orders</a>
+          <a href="{% url 'storefront:reservations_list' %}">My Reservations</a>
+        {% endif %}
       </div>
       <div class="row" style="gap:8px">
         {% if user.is_authenticated %}
@@ -85,11 +88,16 @@
           <button class="btn primary" type="submit" style="width:100%">Create Account</button>
         </form>
         <div class="muted" style="margin-top:8px;text-align:center">
-          <span id="authToggleText">Don't have an account? <a href="#" onclick="return toggleAuthMode()">Sign up</a></span>
+          <span id="authToggleText">Don't have an account? <a href="#" onclick="return setAuthMode('register')">Sign up</a></span>
         </div>
       </div>
     </div>
     <div onclick="closeAuthModal()" style="position:absolute;inset:0"></div>
+    <style>
+      /* Ensure the modal card is above the click-to-close overlay */
+      #authModal .card { position: relative; z-index: 1101; }
+      #authModal > div:last-child { z-index: 1100; }
+    </style>
   </div>
 
   <script>
@@ -134,13 +142,29 @@
       }
     }, true);
     // ---- Auth modal helpers ----
-    function csrfToken(){ const m = document.cookie.match(/csrftoken=([^;]+)/); return m ? decodeURIComponent(m[1]) : '{{ csrf_token }}'; }
-    function openAuthModal(){ const m=document.getElementById('authModal'); m.style.display='flex'; setAuthMode('login'); }
+    function csrfToken(){
+      // Prefer cookie, but if HttpOnly is enabled, fall back to hidden input
+      try{
+        const m = document.cookie.match(/csrftoken=([^;]+)/);
+        if (m) return decodeURIComponent(m[1]);
+      }catch(_){ /* ignore */ }
+      const inp = document.querySelector('input[name="csrfmiddlewaretoken"]');
+      if (inp && inp.value) return inp.value;
+      // Last-resort template fallback
+      return '{{ csrf_token }}';
+    }
+    function openAuthModal(mode){
+      const m = document.getElementById('authModal');
+      m.style.display = 'flex';
+      setAuthMode(mode === 'register' ? 'register' : 'login');
+    }
+    // Convenience: open directly to Sign up mode
+    function openSignUpModal(){ return openAuthModal('register'); }
     function closeAuthModal(){ const m=document.getElementById('authModal'); m.style.display='none'; }
     function setAuthMode(mode){
       const l=document.getElementById('loginForm'); const r=document.getElementById('registerForm'); const t=document.getElementById('authTitle'); const tx=document.getElementById('authToggleText');
-      if (mode==='register'){ l.style.display='none'; r.style.display='block'; t.textContent='Sign up'; tx.innerHTML = "Already have an account? <a href='#' onclick='return toggleAuthMode()'>Login</a>"; }
-      else { l.style.display='block'; r.style.display='none'; t.textContent='Login'; tx.innerHTML = "Don't have an account? <a href='#' onclick='return toggleAuthMode()'>Sign up</a>"; }
+      if (mode==='register'){ l.style.display='none'; r.style.display='block'; t.textContent='Sign up'; tx.innerHTML = "Already have an account? <a href='#' onclick=\"return setAuthMode('login')\">Login</a>"; }
+      else { l.style.display='block'; r.style.display='none'; t.textContent='Login'; tx.innerHTML = "Don't have an account? <a href='#' onclick=\"return setAuthMode('register')\">Sign up</a>"; }
       return false;
     }
     function toggleAuthMode(){ const r=document.getElementById('registerForm'); return setAuthMode(r.style.display==='none'?'register':'login'); }
@@ -149,8 +173,11 @@
         const res = await fetch('{% url "accounts:login_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken(),'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin', body: JSON.stringify(payload)});
         let data = null; const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')){ data = await res.json().catch(()=>null); }
         if(!res.ok){ alert(data && data.detail ? data.detail : 'Login failed'); return; }
+        // Merge guest cart into user cart then proceed
+        await mergeCartAfterLogin();
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
+        else if (window._postAuthAction === 'reserve'){ window._postAuthAction = null; window.location.href = '{% url "reservations_portal:page" %}'; }
       } catch(e){ console.error(e); alert('Login failed'); }
       return false;
     }
@@ -159,8 +186,11 @@
         const res = await fetch('{% url "accounts:register_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken(),'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin', body: JSON.stringify(payload)});
         let data = null; const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')){ data = await res.json().catch(()=>null); }
         if(!res.ok){ alert(data && data.detail ? data.detail : 'Registration failed'); return; }
+        // Merge guest cart into new user cart then proceed
+        await mergeCartAfterLogin();
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
+        else if (window._postAuthAction === 'reserve'){ window._postAuthAction = null; window.location.href = '{% url "reservations_portal:page" %}'; }
       } catch(e){ console.error(e); alert('Registration failed'); }
       return false;
     }
@@ -182,6 +212,29 @@
     }
     document.addEventListener('DOMContentLoaded', refreshCartBar);
     document.body.addEventListener('cart:changed', refreshCartBar);
+
+    // Merge helper: asks server to merge session cart into user cart post-auth
+    async function mergeCartAfterLogin(){
+      try{
+        await fetch('{% url "storefront:cart_merge_session" %}', { method:'POST', headers:{'X-CSRFToken': csrfToken(),'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin' });
+      }catch(e){ /* non-fatal */ }
+    }
+
+    // Nav: Reserve Table link
+    function navReserve(){
+      try{
+        // If logged in, go to portal
+        {% if user.is_authenticated %}
+          window.location.href = '{% url "reservations_portal:page" %}';
+          return false;
+        {% else %}
+          // Prompt login then jump to portal
+          window._postAuthAction = 'reserve';
+          openAuthModal('login');
+          return false;
+        {% endif %}
+      }catch(e){ return true; }
+    }
   </script>
   <!-- CSRF priming to ensure cookie is set -->
   <form style="display:none">{% csrf_token %}</form>

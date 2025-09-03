@@ -14,6 +14,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 load_dotenv(BASE_DIR / ".env")
 
+# Public site/base URL used for building absolute redirect URLs (Stripe requires absolute)
+# Example: http://localhost:8000 or https://yourdomain.com
+SITE_URL = os.getenv("SITE_URL", "http://localhost:8000").rstrip("/")
+
 # -----------------------------------------------------------------------------
 # Core Security Settings
 # -----------------------------------------------------------------------------

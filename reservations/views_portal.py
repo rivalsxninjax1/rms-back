@@ -18,43 +18,23 @@ from .serializers_portal import (
 
 # derive “20-minute hold after checkout” from existing Orders/Payments
 def _current_dinein_busy_map(now=None):
-    from payments.models import Payment  # local import to avoid circulars
-    now = now or timezone.now()
-    win = now - timedelta(minutes=20)
-    # Paid dine-in orders in the last 20 minutes
-    qs = (
-        Payment.objects
-        .filter(is_paid=True, updated_at__gt=win,
-                order__source="DINE_IN",
-                order__table_number__isnull=False)
-        .select_related("order")
-    )
-    busy = {}
-    for p in qs:
-        tnum = str(p.order.table_number)
-        remaining = int((p.updated_at + timedelta(minutes=20) - now).total_seconds())
-        busy[tnum] = max(0, remaining)
-    return busy  # {table_number_str: seconds_remaining}
+    # Simplified: omit dine-in turnover integration for now.
+    # If desired, derive from recent orders in orders.Order with DINE_IN status.
+    return {}
 
 def _parse_dt(date_str: str, time_str: str) -> datetime:
     # naive local dt ok if your app already assumes local timezone
     return datetime.fromisoformat(f"{date_str}T{time_str}")
 
 def _active_reservations(slot_dt: datetime):
-    # Treat reservations within ±90 minutes of the requested slot as blocking,
-    # excluding terminal states. Adjust statuses to match yours if needed.
+    # Reservations within ±90 minutes of requested slot, excluding terminal states
     margin = timedelta(minutes=90)
-    date = slot_dt.date()
-    time = slot_dt.time()
-    start = (datetime.combine(date, time) - margin).time()
-    end   = (datetime.combine(date, time) + margin).time()
+    start = slot_dt - margin
+    end = slot_dt + margin
     return (
-        Reservation.objects.filter(
-            reservation_date=date,
-            reservation_time__gte=start,
-            reservation_time__lte=end,
-        )
-        .exclude(status__in=["CANCELLED","COMPLETED","NO_SHOW"])
+        Reservation.objects
+        .filter(start_time__lt=end, end_time__gt=start)
+        .exclude(status__in=["cancelled", "completed", "no_show"])
         .select_related("table")
     )
 
@@ -78,9 +58,7 @@ class AvailabilityView(APIView):
 
         now = timezone.now()
         # Map: table_id -> Reservation
-        res_map = {}
-        for r in _active_reservations(slot_dt):
-            res_map[r.table_id] = r
+        res_map = {r.table_id: r for r in _active_reservations(slot_dt)}
 
         busy_map = _current_dinein_busy_map(now)  # table_number -> seconds
 

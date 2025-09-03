@@ -2,6 +2,12 @@
   <div class="row" style="justify-content:space-between"><span>Subtotal</span><strong>₹ {{ cart.subtotal }}</strong></div>
   <div class="row" style="justify-content:space-between;margin-top:4px"><span>Extras</span><strong>₹ {{ cart.modifier_total }}</strong></div>
   <div class="row" style="justify-content:space-between;margin-top:4px"><span>Tip</span><strong>₹ {{ cart.tip_amount }}</strong></div>
+  {% if cart.coupon_discount and cart.coupon_discount|floatformat != '0.00' %}
+    <div class="row" style="justify-content:space-between;margin-top:4px"><span>Coupon Discount{% if cart.applied_coupon_code %} ({{ cart.applied_coupon_code }}){% endif %}</span><strong>- ₹ {{ cart.coupon_discount }}</strong></div>
+  {% endif %}
+  {% if cart.loyalty_discount and cart.loyalty_discount|floatformat != '0.00' %}
+    <div class="row" style="justify-content:space-between;margin-top:4px"><span>Loyalty Discount</span><strong>- ₹ {{ cart.loyalty_discount }}</strong></div>
+  {% endif %}
   <form class="row js-ajax" style="margin:8px 0" action="{% url 'storefront:cart_tip' %}" method="post">
     {% csrf_token %}
     <input type="text" name="amount" placeholder="Enter tip (absolute)" value="{{ cart.tip_amount }}"/>
