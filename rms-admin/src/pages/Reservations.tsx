@@ -1,433 +1,275 @@
-import { useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useLocations, useTableAvailability, useReservations as useResv, useReservationAction, useCreateReservation } from '../hooks/reservations'
 import api from '../lib/api'
 
-interface Table {
+interface Location { id: number; name: string }
+interface TableAvail { id: number; table_number: string | number; capacity: number; is_free?: boolean; is_active?: boolean; busy?: Array<{start:string;end:string;reservation_id:number}>; free?: Array<{start:string;end:string}> }
+interface ReservationRow {
   id: number
-  number: string
-  capacity: number
-  location: string
-  is_available: boolean
-}
-
-interface Reservation {
-  id: number
-  customer_name: string
-  customer_phone: string
-  customer_email?: string
-  table: Table
+  table: number
   party_size: number
-  reservation_date: string
-  reservation_time: string
-  status: 'pending' | 'confirmed' | 'seated' | 'completed' | 'cancelled' | 'no_show'
-  special_requests?: string
-  created_at: string
-  updated_at: string
+  guest_name?: string
+  guest_phone?: string
+  status: string
+  start_time: string
+  end_time: string
+  deposit_amount?: string
+  deposit_paid?: boolean
 }
-
-const RESERVATION_STATUSES = [
-  { value: 'pending', label: 'Pending', color: 'text-yellow-600 bg-yellow-100' },
-  { value: 'confirmed', label: 'Confirmed', color: 'text-blue-600 bg-blue-100' },
-  { value: 'seated', label: 'Seated', color: 'text-green-600 bg-green-100' },
-  { value: 'completed', label: 'Completed', color: 'text-gray-600 bg-gray-100' },
-  { value: 'cancelled', label: 'Cancelled', color: 'text-red-600 bg-red-100' },
-  { value: 'no_show', label: 'No Show', color: 'text-red-600 bg-red-100' }
-]
-
-const TIME_SLOTS = [
-  '11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
-  '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30',
-  '19:00', '19:30', '20:00', '20:30', '21:00', '21:30', '22:00'
-]
 
 export default function Reservations() {
-  const [showForm, setShowForm] = useState(false)
-  const [editingReservation, setEditingReservation] = useState<Reservation | null>(null)
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [searchTerm, setSearchTerm] = useState('')
-  
-  const [reservationForm, setReservationForm] = useState({
-    customer_name: '',
-    customer_phone: '',
-    customer_email: '',
-    table_id: 0,
-    party_size: 1,
-    reservation_date: new Date().toISOString().split('T')[0],
-    reservation_time: '19:00',
-    special_requests: ''
-  })
-
   const queryClient = useQueryClient()
-
-  const { data: reservations = [], isLoading } = useQuery({
-    queryKey: ['reservations', selectedDate],
-    queryFn: () => api.get(`/reservations/?date=${selectedDate}`).then((res: any) => res.data),
-    refetchInterval: 30000
+  const [locationId, setLocationId] = useState<number | undefined>(undefined)
+  const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0,10))
+  const [startTime, setStartTime] = useState<string>(() => new Date().toISOString().slice(11,16))
+  const [endTime, setEndTime] = useState<string>(() => {
+    const now = new Date()
+    const end = new Date(now.getTime() + 90*60000)
+    return end.toISOString().slice(11,16)
   })
+  const [statusFilter, setStatusFilter] = useState<string>('')
+  const startISO = useMemo(()=> `${date}T${startTime}:00`, [date, startTime])
+  const endISO = useMemo(()=> `${date}T${endTime}:00`, [date, endTime])
+  const locations = useLocations()
+  const loc = locationId || (locations.data?.[0]?.id ?? 1)
+  const availability = useTableAvailability(loc, startISO, endISO)
+  const reservations = useResv(locationId, date, statusFilter || undefined)
+  const checkIn = useReservationAction('check_in')
+  const checkOut = useReservationAction('check_out')
+  const cancel = useReservationAction('cancel')
+  const confirm = useReservationAction('confirm')
+  const noShow = useReservationAction('no_show')
+  const markPaid = useReservationAction('mark_deposit_paid')
+  const markUnpaid = useReservationAction('mark_deposit_unpaid')
+  const createRes = useCreateReservation()
 
-  const { data: tables = [] } = useQuery({
-    queryKey: ['tables'],
-    queryFn: () => api.get('/tables/').then((res: any) => res.data)
-  })
+  // Floor + selected table timeline state
+  const tables: TableAvail[] = availability.data || []
+  const [selectedTable, setSelectedTable] = useState<number | null>(null)
+  useEffect(() => { if (!selectedTable && tables.length) setSelectedTable(tables[0].id) }, [tables, selectedTable])
 
-  const createReservationMutation = useMutation({
-    mutationFn: (data: typeof reservationForm) => api.post('/reservations/', data),
-    onSuccess: () => {
+  async function quickWalkIn(tableId: number, blockStartISO: string, blockEndISO?: string) {
+    const defaultMinutes = blockEndISO ? Math.max(15, Math.min(360, Math.round((new Date(blockEndISO).getTime() - new Date(blockStartISO).getTime())/60000))) : 90
+    const minutesRaw = window.prompt('Duration minutes:', String(defaultMinutes)) || String(defaultMinutes)
+    const minutes = Math.max(15, Math.min(360, parseInt(minutesRaw || '90', 10) || 90))
+    const guest = window.prompt('Guest name (optional):', '') || ''
+    const phone = window.prompt('Phone (optional):', '') || ''
+    try {
+      await api.post('/reservations/walkin/', { table_id: tableId, minutes, guest_name: guest, phone })
+      alert('Reservation created')
+      queryClient.invalidateQueries({ queryKey: ['table-availability'] })
       queryClient.invalidateQueries({ queryKey: ['reservations'] })
-      resetForm()
+    } catch {
+      alert('Failed to create reservation (possibly conflict)')
     }
-  })
-
-  const updateReservationMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number, data: Partial<Reservation> }) => 
-      api.put(`/reservations/${id}/`, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reservations'] })
-    }
-  })
-
-  const deleteReservationMutation = useMutation({
-    mutationFn: (id: number) => api.delete(`/reservations/${id}/`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reservations'] })
-    }
-  })
-
-  const resetForm = () => {
-    setReservationForm({
-      customer_name: '',
-      customer_phone: '',
-      customer_email: '',
-      table_id: 0,
-      party_size: 1,
-      reservation_date: new Date().toISOString().split('T')[0],
-      reservation_time: '19:00',
-      special_requests: ''
-    })
-    setEditingReservation(null)
-    setShowForm(false)
-  }
-
-  const startEditing = (reservation: Reservation) => {
-    setEditingReservation(reservation)
-    setReservationForm({
-      customer_name: reservation.customer_name,
-      customer_phone: reservation.customer_phone,
-      customer_email: reservation.customer_email || '',
-      table_id: reservation.table.id,
-      party_size: reservation.party_size,
-      reservation_date: reservation.reservation_date,
-      reservation_time: reservation.reservation_time,
-      special_requests: reservation.special_requests || ''
-    })
-    setShowForm(true)
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (editingReservation) {
-      updateReservationMutation.mutate({ id: editingReservation.id, data: reservationForm })
-    } else {
-      createReservationMutation.mutate(reservationForm)
-    }
-  }
-
-  const updateReservationStatus = (id: number, status: Reservation['status']) => {
-    updateReservationMutation.mutate({ id, data: { status } })
-  }
-
-  const filteredReservations = reservations.filter((reservation: Reservation) => {
-    const matchesSearch = reservation.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         reservation.customer_phone.includes(searchTerm)
-    
-    const matchesStatus = statusFilter === 'all' || reservation.status === statusFilter
-    
-    return matchesSearch && matchesStatus
-  })
-
-  const getStatusInfo = (status: string) => {
-    return RESERVATION_STATUSES.find(s => s.value === status) || RESERVATION_STATUSES[0]
-  }
-
-  const formatTime = (time: string) => {
-    return new Date(`2000-01-01T${time}`).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    })
-  }
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric'
-    })
-  }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-      </div>
-    )
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-900">Reservations</h1>
-        <button
-          onClick={() => setShowForm(true)}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-        >
-          New Reservation
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="bg-white p-4 rounded-lg shadow space-y-4">
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1">
-            <input
-              type="text"
-              placeholder="Search by customer name or phone..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-gray-900">Reservations</h2>
+        <div className="flex items-center space-x-3">
           <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="border rounded px-2 py-1"
+            value={locationId ?? ''}
+            onChange={(e) => setLocationId(e.target.value ? Number(e.target.value) : undefined)}
           >
-            <option value="all">All Statuses</option>
-            {RESERVATION_STATUSES.map(status => (
-              <option key={status.value} value={status.value}>{status.label}</option>
+            <option value="">All Locations</option>
+            {locations.data?.map((loc: Location) => (
+              <option key={loc.id} value={loc.id}>{loc.name}</option>
             ))}
           </select>
+          <input type="date" className="border rounded px-2 py-1" value={date} onChange={e=>setDate(e.target.value)} />
+          <input type="time" className="border rounded px-2 py-1" value={startTime} onChange={e=>setStartTime(e.target.value)} />
+          <input type="time" className="border rounded px-2 py-1" value={endTime} onChange={e=>setEndTime(e.target.value)} />
+          <select className="border rounded px-2 py-1" value={statusFilter} onChange={(e)=>setStatusFilter(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="no_show">No Show</option>
+          </select>
+          <button className="px-3 py-1 bg-gray-100 rounded" onClick={() => { queryClient.invalidateQueries({ queryKey: ['table-availability'] }); queryClient.invalidateQueries({ queryKey: ['reservations'] }) }}>Refresh</button>
+          <CreateReservationButton
+            disabled={createRes.isPending}
+            onCreate={(payload)=> createRes.mutate(payload)}
+            tables={availability.data || []}
+            locationId={loc}
+            date={date}
+            start={startISO}
+            end={endISO}
+          />
         </div>
       </div>
 
-      {/* Reservations Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Customer
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Table
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Date & Time
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Party Size
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {filteredReservations.map((reservation: Reservation) => {
-                const statusInfo = getStatusInfo(reservation.status)
+      {/* Floor + Timeline */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <div className="lg:col-span-2">
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Floor / Table Map</h3>
+          {availability.isLoading ? (
+            <div className="text-gray-500">Loading availability…</div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 xl:grid-cols-8 gap-3">
+              {tables.map(t => (
+                <button key={t.id} onClick={()=>setSelectedTable(t.id)} title={t.is_free ? 'Available' : 'Occupied'}
+                  className={`p-3 rounded border text-center transition ${selectedTable===t.id ? 'ring-2 ring-indigo-500' : ''} ${t.is_free ? 'bg-green-50 border-green-300' : 'bg-rose-50 border-rose-300'}`}>
+                  <div className="text-sm font-semibold">Table {t.table_number}</div>
+                  <div className="text-xs text-gray-600">Seats: {t.capacity}</div>
+                  <div className={`mt-1 inline-block px-2 py-0.5 rounded text-xs ${t.is_free ? 'bg-green-200 text-green-800' : 'bg-rose-200 text-rose-800'}`}>{t.is_free ? 'Available' : 'Occupied'}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Timeline</h3>
+          <div className="text-xs text-gray-600 mb-1">{date}</div>
+          <div className="border rounded p-2 bg-white">
+            {availability.isLoading ? (
+              <div className="text-gray-500">Loading…</div>
+            ) : (
+              (()=>{
+                const t = tables.find(x=>x.id===selectedTable)
+                if (!t) return <div className="text-gray-500">Select a table.</div>
+                type Block = {start: string; end: string; type: 'free'} | {start: string; end: string; reservation_id: number; type: 'busy'}
+                const freeBlocks: Block[] = (t.free||[]).map(b=> ({...b, type:'free' as const}))
+                const busyBlocks: Block[] = (t.busy||[]).map(b=> ({...b, type:'busy' as const}))
+                const blocks = [...freeBlocks, ...busyBlocks]
+                  .sort((a,b)=> (a.start < b.start ? -1 : 1))
+                if (!blocks.length) return <div className="text-gray-500">No events in window.</div>
                 return (
-                  <tr key={reservation.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">{reservation.customer_name}</div>
-                        <div className="text-sm text-gray-500">{reservation.customer_phone}</div>
-                        {reservation.customer_email && (
-                          <div className="text-sm text-gray-500">{reservation.customer_email}</div>
+                  <div className="space-y-2">
+                    {blocks.map((b, idx:number)=> (
+                      <div key={idx} className={`flex items-center justify-between px-2 py-1 rounded border ${b.type==='busy' ? 'bg-rose-50 border-rose-300' : 'bg-green-50 border-green-300'}`}
+                        title={b.type==='busy' ? `Reservation ${'reservation_id' in b ? b.reservation_id : ''}` : 'Free slot'}>
+                        <div className="text-xs">
+                          <span className="font-medium">{b.start.slice(11,16)} - {b.end.slice(11,16)}</span>
+                          {b.type==='busy' && <span className="ml-2 text-rose-700">Busy</span>}
+                          {b.type==='free' && <span className="ml-2 text-green-700">Free</span>}
+                        </div>
+                        {b.type==='free' && (
+                          <button className="text-xs px-2 py-0.5 border rounded" onClick={()=>quickWalkIn(t.id, b.start, b.end)}>Walk-in</button>
                         )}
                       </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">Table {reservation.table.number}</div>
-                      <div className="text-sm text-gray-500">{reservation.table.location}</div>
-                      <div className="text-sm text-gray-500">Capacity: {reservation.table.capacity}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{formatDate(reservation.reservation_date)}</div>
-                      <div className="text-sm text-gray-500">{formatTime(reservation.reservation_time)}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {reservation.party_size} {reservation.party_size === 1 ? 'person' : 'people'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <select
-                        value={reservation.status}
-                        onChange={(e) => updateReservationStatus(reservation.id, e.target.value as Reservation['status'])}
-                        className={`text-xs font-semibold rounded-full px-2 py-1 border-0 ${statusInfo.color}`}
-                      >
-                        {RESERVATION_STATUSES.map(status => (
-                          <option key={status.value} value={status.value}>{status.label}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                      <button
-                        onClick={() => startEditing(reservation)}
-                        className="text-indigo-600 hover:text-indigo-900"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (confirm('Are you sure you want to delete this reservation?')) {
-                            deleteReservationMutation.mutate(reservation.id)
-                          }
-                        }}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
+                    ))}
+                  </div>
                 )
-              })}
-            </tbody>
-          </table>
+              })()
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Add/Edit Reservation Modal */}
-      {showForm && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-10 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">
-              {editingReservation ? 'Edit Reservation' : 'New Reservation'}
-            </h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Customer Name</label>
-                <input
-                  type="text"
-                  required
-                  value={reservationForm.customer_name}
-                  onChange={(e) => setReservationForm({ ...reservationForm, customer_name: e.target.value })}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Phone Number</label>
-                <input
-                  type="tel"
-                  required
-                  value={reservationForm.customer_phone}
-                  onChange={(e) => setReservationForm({ ...reservationForm, customer_phone: e.target.value })}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Email (Optional)</label>
-                <input
-                  type="email"
-                  value={reservationForm.customer_email}
-                  onChange={(e) => setReservationForm({ ...reservationForm, customer_email: e.target.value })}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+      {/* Upcoming Reservations */}
+      <div className="bg-white rounded-lg shadow border">
+        <div className="px-4 py-2 border-b">
+          <h3 className="text-lg font-medium text-gray-900">Upcoming</h3>
+        </div>
+        {reservations.isLoading ? (
+          <div className="px-4 py-4 text-gray-500">Loading…</div>
+        ) : reservations.data?.length ? (
+          <div className="divide-y">
+            {reservations.data.map((r: ReservationRow) => (
+              <div key={r.id} className="px-4 py-3 flex items-center justify-between">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Table</label>
-                  <select
-                    required
-                    value={reservationForm.table_id}
-                    onChange={(e) => setReservationForm({ ...reservationForm, table_id: parseInt(e.target.value) })}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value={0}>Select Table</option>
-                    {tables.map((table: Table) => (
-                      <option key={table.id} value={table.id}>
-                        Table {table.number} ({table.capacity} seats)
-                      </option>
-                    ))}
-                  </select>
+                  <div className="font-medium text-gray-900">#{r.id} · Table {r.table} · {new Date(r.start_time).toLocaleString()}</div>
+                  <div className="text-sm text-gray-600">Party {r.party_size} · {r.guest_name || 'Guest'} {r.guest_phone ? '('+r.guest_phone+')' : ''}</div>
+                  {Number(r.deposit_amount || 0) > 0 && (
+                    <div className="text-xs mt-1 flex items-center gap-2">Deposit: ${Number(r.deposit_amount).toFixed(2)} · {r.deposit_paid ? 'Paid' : 'Unpaid'}
+                      {r.deposit_paid
+                        ? <button className="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded" onClick={() => markUnpaid.mutate(r.id)}>Mark Unpaid</button>
+                        : <button className="px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded" onClick={() => markPaid.mutate(r.id)}>Mark Paid</button>
+                      }
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Party Size</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    required
-                    value={reservationForm.party_size}
-                    onChange={(e) => setReservationForm({ ...reservationForm, party_size: parseInt(e.target.value) || 1 })}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  />
+                <div className="flex flex-wrap gap-2">
+                  <span className="px-2 py-0.5 rounded text-xs bg-gray-100">{r.status}</span>
+                  <button className="px-2 py-1 text-xs bg-gray-100 rounded" onClick={() => confirm.mutate(r.id)} disabled={confirm.isPending}>Confirm</button>
+                  <button className="px-2 py-1 text-xs bg-gray-100 rounded" onClick={() => checkIn.mutate(r.id)} disabled={checkIn.isPending}>Check-in</button>
+                  <button className="px-2 py-1 text-xs bg-gray-100 rounded" onClick={() => checkOut.mutate(r.id)} disabled={checkOut.isPending}>Check-out</button>
+                  <button className="px-2 py-1 text-xs bg-red-100 text-red-800 rounded" onClick={() => cancel.mutate(r.id)} disabled={cancel.isPending}>Cancel</button>
+                  <button className="px-2 py-1 text-xs bg-rose-100 text-rose-800 rounded" onClick={() => noShow.mutate(r.id)} disabled={noShow.isPending}>No Show</button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Date</label>
-                  <input
-                    type="date"
-                    required
-                    value={reservationForm.reservation_date}
-                    onChange={(e) => setReservationForm({ ...reservationForm, reservation_date: e.target.value })}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">Time</label>
-                  <select
-                    required
-                    value={reservationForm.reservation_time}
-                    onChange={(e) => setReservationForm({ ...reservationForm, reservation_time: e.target.value })}
-                    className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {TIME_SLOTS.map(time => (
-                      <option key={time} value={time}>{formatTime(time)}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700">Special Requests</label>
-                <textarea
-                  value={reservationForm.special_requests}
-                  onChange={(e) => setReservationForm({ ...reservationForm, special_requests: e.target.value })}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                  rows={3}
-                  placeholder="Any special requests or notes..."
-                />
-              </div>
-              <div className="flex justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={resetForm}
-                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={createReservationMutation.isPending || updateReservationMutation.isPending}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {editingReservation ? 'Update' : 'Create'}
-                </button>
-              </div>
-            </form>
+            ))}
+          </div>
+        ) : (
+          <div className="px-4 py-4 text-gray-500">No upcoming reservations.</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CreateReservationButton({ disabled, onCreate, tables, locationId, date, start, end }: { disabled?: boolean; onCreate: (payload:any)=>void; tables: Array<{id:number; table_number:any; capacity:number; is_free:boolean}>; locationId:number; date:string; start:string; end:string }){
+  const [open, setOpen] = useState(false)
+  const [tableId, setTableId] = useState<number|''>('')
+  const [party, setParty] = useState<number>(2)
+  const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const submit = () => {
+    if (!tableId) return alert('Choose a table')
+    const payload = {
+      location: locationId,
+      table: Number(tableId),
+      party_size: Number(party||2),
+      guest_name: name,
+      guest_phone: phone,
+      start_time: start,
+      end_time: end,
+    }
+    onCreate(payload)
+    setOpen(false)
+  }
+  return (
+    <>
+      <button className="px-3 py-1 bg-indigo-600 text-white rounded" disabled={disabled} onClick={()=>setOpen(true)}>New Reservation</button>
+      {open && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-[999]">
+          <div className="bg-white rounded shadow-lg w-[520px] max-w-[95vw] p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-lg font-semibold">Create Reservation</div>
+              <button className="px-2" onClick={()=>setOpen(false)}>✕</button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-sm">Date
+                <input className="mt-1 w-full border rounded px-2 py-1" type="date" value={date} readOnly />
+              </label>
+              <label className="text-sm">Start
+                <input className="mt-1 w-full border rounded px-2 py-1" type="text" value={start.replace(':00','').split('T')[1]} readOnly />
+              </label>
+              <label className="text-sm">End
+                <input className="mt-1 w-full border rounded px-2 py-1" type="text" value={end.replace(':00','').split('T')[1]} readOnly />
+              </label>
+              <label className="text-sm">Party size
+                <input className="mt-1 w-full border rounded px-2 py-1" type="number" min={1} value={party} onChange={e=>setParty(Number(e.target.value||'2'))} />
+              </label>
+              <label className="text-sm col-span-2">Table
+                <select className="mt-1 w-full border rounded px-2 py-1" value={tableId} onChange={(e)=> setTableId(e.target.value ? Number(e.target.value) : '')}>
+                  <option value="">Choose a table</option>
+                  {tables.map(t=> (
+                    <option key={t.id} value={t.id} disabled={!t.is_free}>Table {t.table_number} · {t.capacity} seats {t.is_free ? '' : '(busy)'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-sm col-span-2">Guest name
+                <input className="mt-1 w-full border rounded px-2 py-1" type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="Optional" />
+              </label>
+              <label className="text-sm col-span-2">Guest phone
+                <input className="mt-1 w-full border rounded px-2 py-1" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} placeholder="Optional" />
+              </label>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button className="px-3 py-1 border rounded" onClick={()=>setOpen(false)}>Cancel</button>
+              <button className="px-3 py-1 bg-indigo-600 text-white rounded" onClick={submit}>Create</button>
+            </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }

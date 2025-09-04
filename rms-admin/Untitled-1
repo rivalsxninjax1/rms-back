@@ -1,0 +1,62 @@
+// src/App.tsx - Updated routing
+<Switch>
+  <Route path="/login" component={Login} />
+  <ProtectedRoute>
+    <Layout>
+      <Switch>
+        <Route exact path="/"><Redirect to="/dashboard" /></Route>
+        
+        {/* Core Routes */}
+        <RBACRoute path="/dashboard" roles={['Manager','Cashier','Kitchen','Host']} component={Dashboard} />
+        <RBACRoute path="/orders" roles={['Manager','Cashier','Kitchen','Host']} component={Orders} />
+        
+        {/* Enhanced Payments Section */}
+        <RBACRoute path="/payments" roles={['Manager','Cashier']}>
+          <PaymentsLayout>
+            <Switch>
+              <Route exact path="/payments" component={PaymentIntents} />
+              <Route path="/payments/intents" component={PaymentIntents} />
+              <Route path="/payments/refunds" component={PaymentRefunds} />
+              <Route path="/payments/webhooks" component={WebhookEvents} />
+              <Route path="/payments/reconciliation" component={PaymentReconciliation} />
+            </Switch>
+          </PaymentsLayout>
+        </RBACRoute>
+        
+        <RBACRoute path="/reservations" roles={['Manager','Host']} component={Reservations} />
+        
+        {/* Consolidated Menu Section */}
+        <RBACRoute path="/menu" roles={['Manager']}>
+          <MenuLayout>
+            <Switch>
+              <Route exact path="/menu" component={MenuItems} />
+              <Route path="/menu/items" component={MenuItems} />
+              <Route path="/menu/modifiers" component={MenuModifiers} />
+              <Route path="/menu/stock" component={MenuStock} />
+              <Route path="/menu/availability" component={MenuAvailability} />
+            </Switch>
+          </MenuLayout>
+        </RBACRoute>
+        
+        <RBACRoute path="/coupons" roles={['Manager']} component={Coupons} />
+        <RBACRoute path="/loyalty" roles={['Manager','Cashier']} component={Loyalty} />
+        
+        {/* Enhanced Reports Section */}
+        <RBACRoute path="/reports" roles={['Manager','Cashier']}>
+          <ReportsLayout>
+            <Switch>
+              <Route exact path="/reports" component={Reports} />
+              <Route path="/reports/daily-sales" component={DailySales} />
+              <Route path="/reports/shift-close" component={ShiftClose} />
+              <Route path="/reports/menu-performance" component={MenuPerformance} />
+              <Route path="/reports/audit-logs" component={AuditLogs} />
+            </Switch>
+          </ReportsLayout>
+        </RBACRoute>
+        
+        <RBACRoute path="/settings" roles={['Manager']} component={Settings} />
+        <RBACRoute path="/users" roles={['Manager']} component={Users} />
+      </Switch>
+    </Layout>
+  </ProtectedRoute>
+</Switch>

@@ -8,6 +8,7 @@ from django.db import transaction
 from decimal import Decimal
 import re
 import uuid
+import json
 
 
 class Table(models.Model):
@@ -705,3 +706,69 @@ class Reservation(models.Model):
     
     def __str__(self):
         return f"Reservation {self.confirmation_number} - {self.guest_name} ({self.party_size} guests)"
+
+
+class AuditLog(models.Model):
+    """
+    Audit log model to track changes to critical models.
+    Records create, update, and delete operations with field-level diffs.
+    """
+    
+    ACTION_CREATE = 'create'
+    ACTION_UPDATE = 'update'
+    ACTION_DELETE = 'delete'
+    
+    ACTION_CHOICES = [
+        (ACTION_CREATE, 'Create'),
+        (ACTION_UPDATE, 'Update'),
+        (ACTION_DELETE, 'Delete'),
+    ]
+    
+    model_name = models.CharField(
+        max_length=100,
+        help_text="Name of the model that was changed"
+    )
+    
+    object_id = models.CharField(
+        max_length=100,
+        help_text="ID of the object that was changed"
+    )
+    
+    action = models.CharField(
+        max_length=10,
+        choices=ACTION_CHOICES,
+        help_text="Type of action performed"
+    )
+    
+    by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="audit_logs",
+        help_text="User who performed the action"
+    )
+    
+    at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the action was performed"
+    )
+    
+    diff = models.JSONField(
+        default=dict,
+        help_text="JSON object containing the changes made"
+    )
+    
+    class Meta:
+        ordering = ['-at']
+        indexes = [
+            models.Index(fields=['model_name', '-at']),
+            models.Index(fields=['object_id', '-at']),
+            models.Index(fields=['by_user', '-at']),
+            models.Index(fields=['action', '-at']),
+            models.Index(fields=['model_name', 'object_id', '-at']),
+        ]
+    
+    def __str__(self):
+        user_str = self.by_user.username if self.by_user else "System"
+        return f"{self.model_name}({self.object_id}) {self.action} by {user_str} at {self.at}"

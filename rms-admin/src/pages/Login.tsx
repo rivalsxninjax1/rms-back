@@ -19,7 +19,7 @@ e.preventDefault()
 setLoading(true)
 setError(null)
 try {
-const { data } = await api.post<TokenPair>('/auth/token/', {
+const { data } = await api.post<TokenPair>('/accounts/api/login/', {
 username,
 password,
 })

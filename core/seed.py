@@ -23,20 +23,14 @@ def seed_default_tables(min_tables: int = 6) -> dict:
         if loc_created:
             created["locations"] += 1
 
-        letters = ["A", "B"]
-        count = 0
-        for letter in letters:
-            for num in range(1, min_tables + 1):
-                if count >= min_tables:
-                    break
-                _, t_created = Table.objects.get_or_create(
-                    location=loc,
-                    table_number=f"{letter}{num}",
-                    defaults={"capacity": 4, "is_active": True, "table_type": "dining"},
-                )
-                if t_created:
-                    created["tables"] += 1
-                count += 1
+        # Consistent naming: T1..T<n>
+        for num in range(1, min_tables + 1):
+            _, t_created = Table.objects.get_or_create(
+                location=loc,
+                table_number=f"T{num}",
+                defaults={"capacity": 4, "is_active": True, "table_type": "dining"},
+            )
+            if t_created:
+                created["tables"] += 1
 
     return created
-

@@ -12,6 +12,13 @@ class CoreConfig(AppConfig):
         from .signals import register_table_sync_signals
         register_table_sync_signals()
 
+        # Wire additional receivers (order_paid, order_status_changed)
+        try:
+            from . import receivers  # noqa: F401
+        except Exception:
+            # Keep startup resilient if optional deps missing
+            pass
+
         # Optionally auto-seed tables after migrations in dev environments
         def _post_migrate_seed(sender, **kwargs):
             try:

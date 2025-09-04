@@ -20,10 +20,17 @@ class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
         fields = [
-            'id', 'order', 'method', 'amount', 'reference', 'notes',
-            'created_at', 'created_by'
+            'id', 'order', 'method', 'status', 'amount', 'currency', 'external_ref', 'notes',
+            'created_at', 'updated_at', 'created_by'
         ]
-        read_only_fields = ['created_at', 'created_by']
+        read_only_fields = ['created_at', 'updated_at', 'created_by']
+
+
+class OfflinePaymentCreateSerializer(serializers.Serializer):
+    order_id = serializers.IntegerField(min_value=1)
+    method = serializers.ChoiceField(choices=[('cash', 'cash'), ('pos_card', 'pos_card')])
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class PaymentReceiptSerializer(serializers.ModelSerializer):

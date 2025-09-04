@@ -2,46 +2,46 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import api from '../lib/api'
 
-interface SalesReport {
-  total_revenue: number
-  total_orders: number
-  average_order_value: number
-  top_selling_items: Array<{
-    name: string
-    quantity_sold: number
-    revenue: number
-  }>
-  daily_sales: Array<{
-    date: string
-    revenue: number
-    orders: number
-  }>
-  payment_methods: Array<{
-    method: string
-    count: number
-    total: number
-  }>
-}
+// interface SalesReport {
+//   total_revenue: number
+//   total_orders: number
+//   average_order_value: number
+//   top_selling_items: Array<{
+//     name: string
+//     quantity_sold: number
+//     revenue: number
+//   }>
+//   daily_sales: Array<{
+//     date: string
+//     revenue: number
+//     orders: number
+//   }>
+//   payment_methods: Array<{
+//     method: string
+//     count: number
+//     total: number
+//   }>
+// }
 
-interface InventoryReport {
-  low_stock_items: Array<{
-    name: string
-    current_stock: number
-    minimum_stock: number
-  }>
-  out_of_stock_items: Array<{
-    name: string
-    sku: string
-  }>
-  total_inventory_value: number
-}
+// interface InventoryReport {
+//   low_stock_items: Array<{
+//     name: string
+//     current_stock: number
+//     minimum_stock: number
+//   }>
+//   out_of_stock_items: Array<{
+//     name: string
+//     sku: string
+//   }>
+//   total_inventory_value: number
+// }
 
-interface CustomerReport {
-  total_customers: number
-  new_customers_this_month: number
-  repeat_customers: number
-  customer_retention_rate: number
-}
+// interface CustomerReport {
+//   total_customers: number
+//   new_customers_this_month: number
+//   repeat_customers: number
+//   customer_retention_rate: number
+// }
 
 const REPORT_PERIODS = [
   { value: '7', label: 'Last 7 Days' },
@@ -109,8 +109,7 @@ export default function Reports() {
     </div>
   )
 
-  const TabButton = ({ id, label, isActive, onClick }: {
-    id: string
+  const TabButton = ({ label, isActive, onClick }: {
     label: string
     isActive: boolean
     onClick: () => void
@@ -145,19 +144,16 @@ export default function Reports() {
       {/* Tab Navigation */}
       <div className="flex space-x-2">
         <TabButton
-          id="sales"
           label="Sales"
           isActive={activeTab === 'sales'}
           onClick={() => setActiveTab('sales')}
         />
         <TabButton
-          id="inventory"
           label="Inventory"
           isActive={activeTab === 'inventory'}
           onClick={() => setActiveTab('inventory')}
         />
         <TabButton
-          id="customers"
           label="Customers"
           isActive={activeTab === 'customers'}
           onClick={() => setActiveTab('customers')}

@@ -27,11 +27,8 @@
 </div>
 
 <script>
-  // ✅ Clear ONLY the cart after payment success
+  // Clear client-side cart mirror only; server cart is already converted to an order.
   try {
-    // Clear server-side session cart keys (does not flush entire session)
-    fetch("/api/cart/clear/", { method:"POST", credentials:"include" }).catch(()=>{});
-    // Clear any client-side mirror
     localStorage.removeItem("cart");
     localStorage.removeItem("applied_coupon");
   } catch (e) {}

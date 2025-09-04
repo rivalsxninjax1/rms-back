@@ -52,6 +52,15 @@ class ShiftReport(models.Model):
     orders_count = models.PositiveIntegerField(default=0)
     total_cents = models.PositiveIntegerField(default=0)
 
+    # Cash drawer tracking
+    opened_at = models.DateTimeField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    cash_open_cents = models.IntegerField(default=0, help_text="Starting cash in drawer (¢)")
+    cash_close_cents = models.IntegerField(default=0, help_text="Ending cash in drawer (¢)")
+    cash_sales_cents = models.IntegerField(default=0, help_text="Cash sales total (¢) recorded by POS")
+    over_short_cents = models.IntegerField(default=0, help_text="Cash over/short (¢) = close - open - cash_sales")
+    notes = models.TextField(blank=True, default="")
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

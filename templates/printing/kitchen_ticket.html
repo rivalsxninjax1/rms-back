@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Kitchen Ticket</title>
+    <style>
+      body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
+      h2 { margin: 0 0 8px 0; font-size: 16px; }
+      .meta { margin-bottom: 8px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #e5e5e5; padding: 6px; text-align: left; }
+      th { background: #f7f7f7; }
+      .qty { width: 70px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <h2>Kitchen Ticket — Order #{{ order.order_number|default:order.id }}</h2>
+    <div class="meta">
+      <div>When: {{ now|date:"Y-m-d H:i" }}</div>
+      <div>Service: {{ order.delivery_option }}</div>
+      {% if order.table and order.table.name %}<div>Table: {{ order.table.name }}</div>{% endif %}
+      {% if order.customer_name %}<div>Customer: {{ order.customer_name }}</div>{% endif %}
+    </div>
+    <table>
+      <thead>
+        <tr><th>Item</th><th class="qty">Qty</th></tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr>
+            <td>{{ it.name }}</td>
+            <td class="qty">{{ it.qty }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="2">No items</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </body>
+</html>

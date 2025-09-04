@@ -60,6 +60,46 @@ class Table(models.Model):
         return f"Inventory-{self.location.name}#{self.table_number} ({self.capacity}) - {self.condition}"
 
 
+class TableAsset(models.Model):
+    """
+    New asset record linked to the canonical core.Table.
+    Holds asset/inventory-specific fields that should not live on the SSOT Table.
+    """
+    table = models.OneToOneField(
+        "core.Table",
+        on_delete=models.CASCADE,
+        related_name="asset",
+        help_text="Canonical table this asset record describes",
+    )
+    condition = models.CharField(
+        max_length=20,
+        choices=[
+            ('excellent', 'Excellent'),
+            ('good', 'Good'),
+            ('fair', 'Fair'),
+            ('needs_repair', 'Needs Repair'),
+            ('out_of_service', 'Out of Service'),
+        ],
+        default='good'
+    )
+    last_maintenance = models.DateField(null=True, blank=True)
+    purchase_date = models.DateField(null=True, blank=True)
+    purchase_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Table Asset"
+        verbose_name_plural = "Table Assets"
+        indexes = [
+            models.Index(fields=["condition"]),
+            models.Index(fields=["-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"TableAsset for {self.table_id} ({self.condition})"
+
+
 class Supplier(models.Model):
     phone_regex = RegexValidator(
         regex=r'^\+?1?\d{9,15}$',

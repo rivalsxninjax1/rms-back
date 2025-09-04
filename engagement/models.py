@@ -8,7 +8,7 @@ from django.utils import timezone
 # Import the real loyalty config model and expose it as LoyaltyTier for
 # legacy code that expects engagement.models.LoyaltyTier.
 try:
-    from loyality.models import TipLoyaltySetting as LoyaltyTier  # noqa: F401
+    from loyalty.models import TipLoyaltySetting as LoyaltyTier  # noqa: F401
 except Exception:
     # If loyality app is not ready yet, define a tiny placeholder so imports don't crash.
     class LoyaltyTier:  # type: ignore

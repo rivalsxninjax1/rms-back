@@ -50,16 +50,23 @@
     el.classList.toggle("is-busy", !!busy); 
   }
 
-  function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) return parts.pop().split(";").shift();
-    return "";
+  // Robust CSRF fetcher: prefer hidden input (works when HttpOnly cookie is enabled),
+  // then fall back to cookie if accessible.
+  function csrfToken() {
+    try {
+      const inp = document.querySelector('input[name="csrfmiddlewaretoken"]');
+      if (inp && inp.value) return inp.value;
+    } catch(_) { /* ignore */ }
+    try {
+      const m = document.cookie.match(/csrftoken=([^;]+)/);
+      if (m) return decodeURIComponent(m[1]);
+    } catch(_) { /* ignore */ }
+    return '';
   }
 
   // Session-based login (no JWT)
   async function sessionLogin(username, password){
-    const csrftoken = getCookie('csrftoken');
+    const csrftoken = csrfToken();
     const res = await fetch("/accounts/login/", { 
       method: "POST", 
       headers: { 
@@ -78,7 +85,7 @@
 
   // Session-based registration
   async function sessionRegister(userData){
-    const csrftoken = getCookie('csrftoken');
+    const csrftoken = csrfToken();
     const res = await fetch("/accounts/register/", { 
       method: "POST", 
       headers: { 

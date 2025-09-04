@@ -22,6 +22,7 @@ from orders.utils.cart import merge_carts
 from coupons.services import find_active_coupon, compute_discount_for_order
 from payments.services import create_checkout_session
 from core.seed import seed_default_tables
+from engagement.models import ReservationHold
 
 def _to_cents(amount):
     d = Decimal(str(amount or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -296,6 +297,8 @@ def cart_option(request: HttpRequest) -> HttpResponse:
             # Persist all selected tables in metadata
             sel_list = table_ids if table_ids else ([primary_id] if primary_id else [])
             meta["tables"] = sel_list
+            # Do not create a hold at selection time; holds are created after payment only.
+            # This prevents blocking other days/times before checkout completes.
     else:
         cart.table = None
         meta.pop("tables", None)
@@ -385,7 +388,13 @@ def cart_checkout(request: HttpRequest) -> HttpResponse:
             )
     except Exception:
         pass
-    session = create_checkout_session(order)
+    # Build absolute URLs using the current request host to preserve session domain
+    try:
+        suc = request.build_absolute_uri(reverse('payments:checkout-success'))
+        can = request.build_absolute_uri(reverse('payments:checkout-cancel'))
+    except Exception:
+        suc = None; can = None
+    session = create_checkout_session(order, success_url=suc, cancel_url=can)
     redirect_url = ""
     try:
         # Stripe SDK returns an object with attribute access
@@ -510,7 +519,7 @@ def cart_table_modal(request: HttpRequest) -> HttpResponse:
         for tid in (cart.metadata.get("tables") or []):
             if isinstance(tid, int) and tid not in sel_ids:
                 sel_ids.append(tid)
-    # Compute reserved ids in next 2 hours
+    # Compute reserved ids in next 2 hours and active holds
     try:
         from reservations.models import Reservation
         active_status = ["pending", "confirmed"]
@@ -523,6 +532,13 @@ def cart_table_modal(request: HttpRequest) -> HttpResponse:
         )
     except Exception:
         reserved_ids = set()
+    try:
+        hold_ids = set(
+            ReservationHold.objects.filter(status="PENDING", expires_at__gt=now).values_list("table_id", flat=True)
+        )
+        reserved_ids = reserved_ids.union(hold_ids)
+    except Exception:
+        pass
     return render(request, "storefront/_table_modal.html", {
         "cart": cart,
         "tables": tables,

@@ -44,10 +44,16 @@ document.addEventListener('DOMContentLoaded', function() {
 (function () {
   // $ utility is now available from utils.js
 
-  // CSRF helpers
-  function getCookie(name){
-    const m = document.cookie.match(new RegExp("(^| )"+name+"=([^;]+)"));
-    return m ? decodeURIComponent(m[2]) : "";
+  // CSRF helper: prefer hidden input, fallback to cookie
+  function csrfToken(){
+    try{
+      const inp = document.querySelector('input[name="csrfmiddlewaretoken"]');
+      if (inp && inp.value) return inp.value;
+    }catch(_){/* ignore */}
+    try{
+      const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    }catch(_){ return ''; }
   }
 
   async function isAuthenticated(){
@@ -73,7 +79,7 @@ document.addEventListener('DOMContentLoaded', function() {
       method: "POST",
       headers: {
         "Content-Type":"application/json",
-        "X-CSRFToken": getCookie("csrftoken")
+        "X-CSRFToken": csrfToken()
       },
       credentials: "include",
       body: JSON.stringify(payload)
@@ -101,7 +107,7 @@ document.addEventListener('DOMContentLoaded', function() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "X-CSRFToken": getCookie("csrftoken")
+            "X-CSRFToken": csrfToken()
           },
           credentials: "include",
           body: JSON.stringify({

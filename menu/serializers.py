@@ -9,10 +9,16 @@ class ModifierSerializer(serializers.ModelSerializer):
     """
     Clean serializer for modifiers with proper validation.
     """
+    modifier_group_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    available_from = serializers.TimeField(required=False, allow_null=True)
+    available_until = serializers.TimeField(required=False, allow_null=True)
+
     class Meta:
         model = Modifier
         fields = [
             'id', 'name', 'description', 'price', 'is_available',
+            'available_from', 'available_until',
+            'modifier_group', 'modifier_group_id',
             'sort_order', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -33,6 +39,26 @@ class ModifierSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Name cannot exceed 100 characters.")
         return value.strip()
 
+    def create(self, validated_data):
+        group_id = validated_data.pop('modifier_group_id', None)
+        obj = Modifier.objects.create(**validated_data)
+        if group_id:
+            try:
+                obj.modifier_group_id = int(group_id)
+                obj.save(update_fields=['modifier_group'])
+            except Exception:
+                pass
+        return obj
+
+    def update(self, instance, validated_data):
+        group_id = validated_data.pop('modifier_group_id', None)
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        if group_id is not None:
+            instance.modifier_group_id = group_id or None
+        instance.save()
+        return instance
+
 
 class ModifierGroupSerializer(serializers.ModelSerializer):
     """
@@ -41,10 +67,11 @@ class ModifierGroupSerializer(serializers.ModelSerializer):
     modifiers = ModifierSerializer(many=True, read_only=True)
     available_modifiers_count = serializers.SerializerMethodField()
     
+    menu_item_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     class Meta:
         model = ModifierGroup
         fields = [
-            'id', 'name', 'description', 'is_required', 'max_selections',
+            'id', 'menu_item', 'menu_item_id', 'name', 'description', 'is_required', 'max_selections',
             'min_selections', 'sort_order', 'modifiers', 'available_modifiers_count',
             'created_at', 'updated_at'
         ]
@@ -88,6 +115,26 @@ class ModifierGroupSerializer(serializers.ModelSerializer):
         
         return attrs
 
+    def create(self, validated_data):
+        item_id = validated_data.pop('menu_item_id', None)
+        obj = ModifierGroup.objects.create(**validated_data)
+        if item_id:
+            try:
+                obj.menu_item_id = int(item_id)
+                obj.save(update_fields=['menu_item'])
+            except Exception:
+                pass
+        return obj
+
+    def update(self, instance, validated_data):
+        item_id = validated_data.pop('menu_item_id', None)
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        if item_id is not None:
+            instance.menu_item_id = item_id or None
+        instance.save()
+        return instance
+
 
 class MenuCategorySerializer(serializers.ModelSerializer):
     """
@@ -95,10 +142,13 @@ class MenuCategorySerializer(serializers.ModelSerializer):
     """
     available_items_count = serializers.SerializerMethodField()
     
+    available_from = serializers.TimeField(required=False, allow_null=True)
+    available_until = serializers.TimeField(required=False, allow_null=True)
     class Meta:
         model = MenuCategory
         fields = [
             'id', 'name', 'description', 'is_active', 'sort_order',
+            'available_from', 'available_until',
             'available_items_count', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -126,11 +176,15 @@ class MenuItemSerializer(serializers.ModelSerializer):
     available_modifier_groups_count = serializers.SerializerMethodField()
     dietary_info = serializers.SerializerMethodField()
     
+    available_from = serializers.TimeField(required=False, allow_null=True)
+    available_until = serializers.TimeField(required=False, allow_null=True)
+    image = serializers.ImageField(required=False, allow_null=True)
     class Meta:
         model = MenuItem
         fields = [
             'id', 'name', 'description', 'price', 'category', 'category_id',
             'is_available', 'is_vegetarian', 'is_vegan', 'is_gluten_free',
+            'available_from', 'available_until', 'image',
             'preparation_time', 'sort_order', 'modifier_groups',
             'available_modifier_groups_count', 'dietary_info',
             'created_at', 'updated_at'

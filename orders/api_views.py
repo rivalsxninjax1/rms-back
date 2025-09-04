@@ -17,6 +17,7 @@ import uuid
 import json
 
 from .models import Cart, CartItem, Order, OrderItem
+from .services.totals import compute_cart_totals, compute_order_totals
 from menu.models import MenuItem, Modifier, ModifierGroup
 from .serializers import (
     CartSerializer, CartCreateSerializer, CartItemSerializer,
@@ -177,9 +178,8 @@ class CartViewSet(viewsets.ModelViewSet):
                 # Create or update cart item using serializer
                 cart_item = serializer.create(serializer.validated_data)
                 
-                # Update cart totals
-                cart.calculate_totals()
-                cart.save()
+                # Update cart totals via centralized service
+                compute_cart_totals(cart, save=True)
                 
                 # Return updated cart
                 cart_serializer = CartSerializer(cart, context={'request': request})
@@ -207,7 +207,8 @@ class CartViewSet(viewsets.ModelViewSet):
         validated_data = serializer.validated_data
         cart_item_id = validated_data['cart_item_id']
         quantity = validated_data.get('quantity')
-        special_instructions = validated_data.get('special_instructions')
+        # Use 'notes' field to preserve special instructions
+        notes = validated_data.get('notes')
         
         try:
             with transaction.atomic():
@@ -225,12 +226,12 @@ class CartViewSet(viewsets.ModelViewSet):
                 else:
                     message = 'Item updated'
                 
-                if special_instructions is not None:
-                    cart_item.special_instructions = special_instructions
-                    cart_item.save()
+                if notes is not None:
+                    cart_item.notes = notes
+                    cart_item.save(update_fields=["notes"]) if hasattr(cart_item, "notes") else cart_item.save()
                 
-                # Update cart totals
-                cart.calculate_totals()
+                # Update cart totals via centralized service
+                compute_cart_totals(cart, save=True)
                 
                 # Return updated cart
                 cart_serializer = CartSerializer(cart, context={'request': request})
@@ -265,7 +266,7 @@ class CartViewSet(viewsets.ModelViewSet):
                 cart_item.delete()
                 
                 # Update cart totals
-                cart.update_totals()
+                compute_cart_totals(cart, save=True)
                 
                 # Return updated cart
                 cart_serializer = CartSerializer(cart, context={'request': request})
@@ -289,7 +290,7 @@ class CartViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 cart, _ = self.get_or_create_cart()
                 cart.items.all().delete()
-                cart.update_totals()
+                compute_cart_totals(cart, save=True)
                 
                 cart_serializer = CartSerializer(cart, context={'request': request})
                 return Response({
@@ -349,14 +350,19 @@ class CartViewSet(viewsets.ModelViewSet):
                 # Get anonymous cart
                 anonymous_cart = get_object_or_404(Cart, cart_uuid=anonymous_cart_uuid, user=None)
                 
-                # Get or create user cart
-                user_cart, _ = Cart.objects.get_or_create(
-                    user=request.user,
-                    defaults={
-                        'cart_uuid': uuid.uuid4(),
-                        'session_key': request.session.session_key or ''
-                    }
+                # Get or create an ACTIVE user cart
+                user_cart = (
+                    Cart.objects.filter(user=request.user, status=Cart.STATUS_ACTIVE)
+                    .order_by('-updated_at')
+                    .first()
                 )
+                if not user_cart:
+                    user_cart = Cart.objects.create(
+                        user=request.user,
+                        status=Cart.STATUS_ACTIVE,
+                        cart_uuid=uuid.uuid4(),
+                        session_key=request.session.session_key or ''
+                    )
                 
                 # Merge items from anonymous cart to user cart
                 for anon_item in anonymous_cart.items.all():
@@ -378,7 +384,8 @@ class CartViewSet(viewsets.ModelViewSet):
                 anonymous_cart.delete()
                 
                 # Update user cart totals
-                user_cart.update_totals()
+                from .services.totals import compute_cart_totals
+                compute_cart_totals(user_cart, save=True)
                 
                 cart_serializer = CartSerializer(user_cart, context={'request': request})
                 return Response({
@@ -439,6 +446,38 @@ class CartViewSet(viewsets.ModelViewSet):
                 })
         
         return Response({"modifier_groups": result})
+
+    @action(detail=False, methods=['post'])
+    def assign_table(self, request):
+        """Assign a table and optional delivery option to the active cart.
+
+        Body: { "table_id": number, "delivery_option": "DINE_IN" | "PICKUP" | "DELIVERY" }
+        Returns updated cart snapshot.
+        """
+        table_id = request.data.get('table_id')
+        delivery_option = request.data.get('delivery_option')
+        try:
+            with transaction.atomic():
+                cart, _ = self.get_or_create_cart()
+                # Validate and assign table if provided
+                if table_id is not None:
+                    try:
+                        from core.models import Table
+                        table = Table.objects.get(pk=int(table_id))
+                        cart.table = table
+                    except Exception:
+                        return Response({"error": "Invalid table_id"}, status=status.HTTP_400_BAD_REQUEST)
+                # Assign delivery option if provided
+                if delivery_option:
+                    valid = [choice[0] for choice in Cart.DELIVERY_CHOICES]
+                    if delivery_option not in valid:
+                        return Response({"error": f"Invalid delivery_option. Choose from {valid}"}, status=status.HTTP_400_BAD_REQUEST)
+                    cart.delivery_option = delivery_option
+                cart.save()
+                ser = CartSerializer(cart, context={'request': request})
+                return Response({"message": "Cart updated", "cart": ser.data})
+        except Exception as e:
+            return Response({"error": f"Failed to assign table: {e}"}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['post'])
     def apply_coupon(self, request):
@@ -559,7 +598,7 @@ class OrderItemViewSet(viewsets.ModelViewSet):
             return OrderItem.objects.filter(
                 order__user=self.request.user
             ).select_related(
-                'order', 'menu_item', 'menu_item__category'
+                'order', 'order__user', 'order__table', 'menu_item', 'menu_item__category'
             ).order_by('-created_at')
         else:
             # For anonymous users, only show items from orders in current session
@@ -568,7 +607,7 @@ class OrderItemViewSet(viewsets.ModelViewSet):
                 return OrderItem.objects.filter(
                     order__source_cart__session_key=session_key
                 ).select_related(
-                    'order', 'menu_item', 'menu_item__category'
+                    'order', 'order__user', 'order__table', 'menu_item', 'menu_item__category'
                 ).order_by('-created_at')
             return OrderItem.objects.none()
     
@@ -712,19 +751,19 @@ class OrderViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'delivery_option']
     
     def get_queryset(self):
-        """Get orders based on user authentication."""
+        """Get orders based on user authentication with eager loading."""
+        base = Order.objects.select_related('user', 'table').prefetch_related(
+            'items__menu_item', 'items__menu_item__category'
+        )
+        if getattr(self.request.user, "is_staff", False):
+            return base.order_by('-created_at')
         if self.request.user.is_authenticated:
-            return Order.objects.filter(user=self.request.user).prefetch_related(
-                'items__menu_item__category'
-            ).order_by('-created_at')
-        else:
-            # For anonymous users, only show orders from current session
-            session_key = self.request.session.session_key
-            if session_key:
-                return Order.objects.filter(source_cart__session_key=session_key).prefetch_related(
-                    'items__menu_item__category'
-                ).order_by('-created_at')
-            return Order.objects.none()
+            return base.filter(user=self.request.user).order_by('-created_at')
+        # For anonymous users, only show orders from current session
+        session_key = self.request.session.session_key
+        if session_key:
+            return base.filter(source_cart__session_key=session_key).order_by('-created_at')
+        return Order.objects.none()
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -772,8 +811,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                     )
                 
                 # Recalculate cart totals before creating order
-                cart.calculate_totals()
-                cart.save()
+                compute_cart_totals(cart, save=True)
                 
                 # Create order using the enhanced create_from_cart method
                 order = Order.create_from_cart(
@@ -783,6 +821,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                     delivery_option=validated_data.get('delivery_option')
                 )
                 
+                # Ensure order totals consistent (defensive)
+                compute_order_totals(order, save=True)
                 # Return created order
                 order_serializer = OrderSerializer(order, context={'request': request})
                 return Response({
@@ -838,8 +878,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         try:
             if order.can_be_cancelled():
-                order.update_status('cancelled', reason)
-                order.save()
+                order.transition_to('cancelled', by_user=(request.user if request.user.is_authenticated else None))
                 
                 serializer = self.get_serializer(order)
                 return Response({
@@ -911,37 +950,18 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Validate status transition
-        if new_status not in dict(order.STATUS_CHOICES):
-            return Response(
-                {'error': 'Invalid status'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # transition_to validates and supports both simplified and enum statuses
         
         try:
-            # Update status with audit trail
-            order.update_status(
-                new_status=new_status,
-                reason=reason,
-                notes=notes,
-                request=request
-            )
-            order.save()
+            # Update status via canonical transition method
+            order.transition_to(new_status=new_status, by_user=(request.user if request.user.is_authenticated else None))
             
             serializer = self.get_serializer(order)
             return Response({
                 'message': 'Order status updated successfully',
                 'order': serializer.data,
-                'status_history': [
-                    {
-                        'status': history.new_status,
-                        'timestamp': history.timestamp,
-                        'user': history.user.username if history.user else 'System',
-                        'reason': history.reason,
-                        'notes': history.notes
-                    }
-                    for history in order.get_status_history()[:5]  # Last 5 changes
-                ]
+                # Keep response light; history endpoint returns rich details
+                'status_history_count': order.status_history.count()
             })
         except Exception as e:
             return Response(

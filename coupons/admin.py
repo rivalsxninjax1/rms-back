@@ -1,6 +1,7 @@
 from __future__ import annotations
 from django.contrib import admin
 from .models import Coupon
+from reports.models import AuditLog
 
 
 @admin.register(Coupon)
@@ -21,3 +22,14 @@ class CouponAdmin(admin.ModelAdmin):
         if not obj.created_by_id:
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+        try:
+            AuditLog.log_action(request.user, 'UPDATE' if change else 'CREATE', f"Coupon {'updated' if change else 'created'}: {obj.code}", content_object=obj, changes=form.changed_data, request=request, category='coupons')
+        except Exception:
+            pass
+
+    def delete_model(self, request, obj):
+        try:
+            AuditLog.log_action(request.user, 'DELETE', f"Coupon deleted: {obj.code}", content_object=obj, request=request, category='coupons')
+        except Exception:
+            pass
+        super().delete_model(request, obj)

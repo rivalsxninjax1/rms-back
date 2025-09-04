@@ -1,6 +1,28 @@
+from django.conf import settings
 from django.db import models
 
 class Payment(models.Model):
+    METHOD_STRIPE = 'stripe'
+    METHOD_CASH = 'cash'
+    METHOD_POS_CARD = 'pos_card'
+    METHOD_CHOICES = [
+        (METHOD_STRIPE, 'Stripe'),
+        (METHOD_CASH, 'Cash'),
+        (METHOD_POS_CARD, 'POS Card'),
+    ]
+
+    STATUS_CREATED = 'created'
+    STATUS_AUTHORIZED = 'authorized'
+    STATUS_CAPTURED = 'captured'
+    STATUS_FAILED = 'failed'
+    STATUS_REFUNDED = 'refunded'
+    STATUS_CHOICES = [
+        (STATUS_CREATED, 'Created'),
+        (STATUS_AUTHORIZED, 'Authorized'),
+        (STATUS_CAPTURED, 'Captured'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_REFUNDED, 'Refunded'),
+    ]
     order = models.ForeignKey(
         "orders.Order",
         on_delete=models.CASCADE,
@@ -8,8 +30,19 @@ class Payment(models.Model):
         related_query_name="billing_payment",
     )
     amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    currency = models.CharField(max_length=8, default="NPR")
-    status = models.CharField(max_length=32, default="created")
+    currency = models.CharField(max_length=8, default="USD")
+    method = models.CharField(max_length=16, choices=METHOD_CHOICES, default=METHOD_STRIPE)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_CREATED)
+    external_ref = models.CharField(max_length=128, blank=True, null=True)
+    notes = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_payments",
+    )
+    # legacy reference field kept for back-compat with any code reading it
     reference = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

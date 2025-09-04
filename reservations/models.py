@@ -40,9 +40,10 @@ class Reservation(models.Model):
         (STATUS_COMPLETED, "Completed"),
     ]
 
+    # Align phone regex with orders app to reduce false rejections
     phone_regex = RegexValidator(
-        regex=r'^\+?1?\d{9,15}$',
-        message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed."
+        regex=r'^[\+]?[1-9]?[0-9]{7,15}$',
+        message="Phone number must be valid. Use digits with optional + (7-15 digits)."
     )
 
     location = models.ForeignKey(
@@ -101,6 +102,26 @@ class Reservation(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Alignment with core.Reservation capabilities
+    confirmation_number = models.CharField(max_length=20, unique=True, null=True, blank=True,
+                                           help_text="Human-readable confirmation number")
+    guest_email = models.EmailField(blank=True, help_text="Guest email address (optional)")
+
+    # Additional lifecycle timestamps
+    seated_at = models.DateTimeField(null=True, blank=True, help_text="When party was seated")
+    completed_at = models.DateTimeField(null=True, blank=True, help_text="When reservation was completed")
+    cancelled_at = models.DateTimeField(null=True, blank=True, help_text="When reservation was cancelled")
+
+    # Staff/guest notes
+    special_requests = models.TextField(blank=True, default="", help_text="Special requests or notes")
+    internal_notes = models.TextField(blank=True, default="", help_text="Internal staff notes")
+
+    # Deposit handling (env-driven)
+    deposit_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Required deposit for this reservation")
+    deposit_paid = models.BooleanField(default=False, help_text="Whether deposit has been paid")
+    deposit_applied = models.BooleanField(default=False, help_text="Whether deposit credit has been applied to final bill")
 
     class Meta:
         ordering = ["-start_time", "-id"]
@@ -108,6 +129,7 @@ class Reservation(models.Model):
             models.Index(fields=["location", "table", "start_time"]),
             models.Index(fields=["location", "start_time", "end_time"]),
             models.Index(fields=["reservation_date"]),
+            models.Index(fields=["created_by", "status"]),
         ]
 
     # ---------------- Validation & overlap prevention ----------------

@@ -2,8 +2,13 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 import logging
+import json
+from threading import local
 
 logger = logging.getLogger(__name__)
+
+# Thread-local storage to track original values for audit logging
+_thread_locals = local()
 
 
 def sync_table_to_other_apps(sender, instance, created, **kwargs):
@@ -170,3 +175,157 @@ def register_table_sync_signals():
         post_delete.connect(sync_table_deletion, sender=InventoryTable)
     except ImportError:
         pass
+
+
+# Audit logging functions
+def get_model_fields_dict(instance):
+    """
+    Get a dictionary of all field values for a model instance.
+    """
+    fields_dict = {}
+    for field in instance._meta.fields:
+        field_name = field.name
+        field_value = getattr(instance, field_name)
+        
+        # Convert non-serializable values to strings
+        if hasattr(field_value, 'isoformat'):  # datetime objects
+            field_value = field_value.isoformat()
+        elif hasattr(field_value, '__str__') and not isinstance(field_value, (str, int, float, bool, type(None))):
+            field_value = str(field_value)
+            
+        fields_dict[field_name] = field_value
+    return fields_dict
+
+
+def get_current_user():
+    """
+    Get the current user from thread-local storage.
+    """
+    return getattr(_thread_locals, 'user', None)
+
+
+def set_current_user(user):
+    """
+    Set the current user in thread-local storage.
+    """
+    _thread_locals.user = user
+
+
+def create_audit_log(model_name, object_id, action, diff_data, user=None):
+    """
+    Create an audit log entry.
+    """
+    try:
+        from core.models import AuditLog
+        AuditLog.objects.create(
+            model_name=model_name,
+            object_id=str(object_id),
+            action=action,
+            by_user=user or get_current_user(),
+            diff=diff_data
+        )
+    except Exception as e:
+        logger.error(f'Failed to create audit log: {e}')
+
+
+@receiver(post_save)
+def audit_model_save(sender, instance, created, **kwargs):
+    """
+    Audit save operations for tracked models.
+    """
+    # Only audit specific models
+    tracked_models = ['Order', 'Reservation', 'Payment']
+    model_name = sender.__name__
+    
+    if model_name not in tracked_models:
+        return
+        
+    try:
+        if created:
+            # For new objects, log all fields
+            diff_data = {
+                'action': 'create',
+                'new_values': get_model_fields_dict(instance)
+            }
+            create_audit_log(model_name, instance.pk, 'create', diff_data)
+        else:
+            # For updates, we need to compare with original values
+            # This requires storing original values before save (in a pre_save signal)
+            original_key = f'{model_name}_{instance.pk}_original'
+            original_values = getattr(_thread_locals, original_key, None)
+            
+            if original_values:
+                current_values = get_model_fields_dict(instance)
+                changes = {}
+                
+                for field_name, new_value in current_values.items():
+                    old_value = original_values.get(field_name)
+                    if old_value != new_value:
+                        changes[field_name] = {
+                            'old': old_value,
+                            'new': new_value
+                        }
+                
+                if changes:
+                    diff_data = {
+                        'action': 'update',
+                        'changes': changes
+                    }
+                    create_audit_log(model_name, instance.pk, 'update', diff_data)
+                
+                # Clean up thread-local storage
+                delattr(_thread_locals, original_key)
+                
+    except Exception as e:
+        logger.error(f'Failed to audit save for {model_name}: {e}')
+
+
+@receiver(post_delete)
+def audit_model_delete(sender, instance, **kwargs):
+    """
+    Audit delete operations for tracked models.
+    """
+    # Only audit specific models
+    tracked_models = ['Order', 'Reservation', 'Payment']
+    model_name = sender.__name__
+    
+    if model_name not in tracked_models:
+        return
+        
+    try:
+        diff_data = {
+            'action': 'delete',
+            'deleted_values': get_model_fields_dict(instance)
+        }
+        create_audit_log(model_name, instance.pk, 'delete', diff_data)
+    except Exception as e:
+        logger.error(f'Failed to audit delete for {model_name}: {e}')
+
+
+# Pre-save signal to capture original values
+from django.db.models.signals import pre_save
+
+@receiver(pre_save)
+def capture_original_values(sender, instance, **kwargs):
+    """
+    Capture original values before save for audit comparison.
+    """
+    tracked_models = ['Order', 'Reservation', 'Payment']
+    model_name = sender.__name__
+    
+    if model_name not in tracked_models or not instance.pk:
+        return
+        
+    try:
+        # Get the original instance from database
+        original_instance = sender.objects.get(pk=instance.pk)
+        original_values = get_model_fields_dict(original_instance)
+        
+        # Store in thread-local storage
+        original_key = f'{model_name}_{instance.pk}_original'
+        setattr(_thread_locals, original_key, original_values)
+    except sender.DoesNotExist:
+        # Object doesn't exist yet (shouldn't happen in pre_save, but just in case)
+        pass
+    except Exception as e:
+        logger.error(f'Failed to capture original values for {model_name}: {e}')

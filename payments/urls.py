@@ -24,6 +24,8 @@ urlpatterns = [
     
     # Refund Management
     path('refund/<int:payment_intent_id>/', views.create_refund, name='create_refund'),
+    # Offline payment capture
+    path('offline/', views.offline_payment, name='offline_payment'),
     
     # Payment Method Management
     path('setup-intent/', views.create_setup_intent, name='create_setup_intent'),

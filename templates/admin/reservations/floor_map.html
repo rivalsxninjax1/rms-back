@@ -1,0 +1,38 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<h1>Floor / Table Map</h1>
+
+<form method="get" class="form-inline" style="margin-bottom:1rem;">
+  <label for="location">Location:</label>
+  <select id="location" name="location" class="vTextField" style="min-width: 12rem; margin: 0 0.5rem;">
+    <option value="">-- All --</option>
+    {% for loc in locations %}
+      <option value="{{ loc.id }}" {% if current_location_id == loc.id %}selected{% endif %}>{{ loc.organization.name }} / {{ loc.name }}</option>
+    {% endfor %}
+  </select>
+  <label for="floor">Floor:</label>
+  <input id="floor" name="floor" value="{{ floor }}" class="vTextField" style="width: 10rem; margin: 0 0.5rem;" placeholder="e.g. Main" />
+  <button class="button" type="submit">Apply</button>
+  <a class="button" href="?">Reset</a>
+  <a class="button" href="{% url 'admin:reservations_reservation_changelist' %}" style="margin-left: .5rem;">Back to Reservations</a>
+  <p class="help">Tip: Edit tables under Core → Tables to set floor and coordinates.</p>
+</form>
+
+<div style="position: relative; width: 100%; border: 1px solid #ddd; height: 600px; background: #fafafa;">
+  {% for t in tables %}
+    {% with left=(t.x|add:0)|floatformat:"0" top=(t.y|add:0)|floatformat:"0" %}
+      <div title="Table {{ t.number }} ({{ t.status }})"
+           style="position: absolute; left: {{ t.x|add:0 }}px; top: {{ t.y|add:0 }}px; width: 48px; height: 48px; border-radius: 8px; display:flex; align-items:center; justify-content:center; font-weight:600; color:#222; border: 2px solid {% if t.occupied %}#e11d48{% else %}#16a34a{% endif %}; background: {% if t.occupied %}#fee2e2{% else %}#dcfce7{% endif %};">
+        {{ t.number }}
+      </div>
+    {% endwith %}
+  {% endfor %}
+</div>
+
+<style>
+  /* You may adapt to CSS grid or SVG later; this keeps it minimal */
+</style>
+{% endblock %}
+

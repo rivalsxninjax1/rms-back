@@ -10,3 +10,5 @@ class OrdersConfig(AppConfig):
         from . import signals_cart  # noqa
         # load cache invalidation signals
         from . import signals  # noqa
+        # load orders broadcast signals
+        from . import signals_orders  # noqa

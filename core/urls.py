@@ -1,6 +1,6 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
-from .views import OrganizationViewSet, LocationViewSet
+from .views import OrganizationViewSet, LocationViewSet, health_check
 from . import test_views
 
 app_name = "core"
@@ -8,6 +8,11 @@ app_name = "core"
 router = DefaultRouter()
 router.register('organizations', OrganizationViewSet)
 router.register('locations', LocationViewSet)
+
+# Health check endpoint
+health_urlpatterns = [
+    path('health/', health_check, name='health_check'),
+]
 
 # Test URLs for error handling middleware
 test_urlpatterns = [
@@ -20,4 +25,4 @@ test_urlpatterns = [
     path('test/success/', test_views.test_success, name='test_success'),
 ]
 
-urlpatterns = router.urls + test_urlpatterns
+urlpatterns = router.urls + health_urlpatterns + test_urlpatterns

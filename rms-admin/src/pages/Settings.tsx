@@ -12,20 +12,7 @@ interface UserProfile {
   role: string
 }
 
-interface SystemSettings {
-  restaurant_name: string
-  restaurant_address: string
-  restaurant_phone: string
-  restaurant_email: string
-  tax_rate: number
-  service_charge: number
-  currency: string
-  timezone: string
-  order_timeout: number
-  auto_accept_orders: boolean
-  email_notifications: boolean
-  sms_notifications: boolean
-}
+
 
 const TIMEZONES = [
   { value: 'UTC', label: 'UTC' },
@@ -182,8 +169,7 @@ export default function Settings() {
     })
   }
 
-  const TabButton = ({ id, label, isActive, onClick }: {
-    id: string
+  const TabButton = ({ label, isActive, onClick }: {
     label: string
     isActive: boolean
     onClick: () => void
@@ -216,25 +202,21 @@ export default function Settings() {
       {/* Tab Navigation */}
       <div className="flex space-x-2">
         <TabButton
-          id="profile"
           label="Profile"
           isActive={activeTab === 'profile'}
           onClick={() => setActiveTab('profile')}
         />
         <TabButton
-          id="restaurant"
           label="Restaurant"
           isActive={activeTab === 'restaurant'}
           onClick={() => setActiveTab('restaurant')}
         />
         <TabButton
-          id="notifications"
           label="Notifications"
           isActive={activeTab === 'notifications'}
           onClick={() => setActiveTab('notifications')}
         />
         <TabButton
-          id="security"
           label="Security"
           isActive={activeTab === 'security'}
           onClick={() => setActiveTab('security')}

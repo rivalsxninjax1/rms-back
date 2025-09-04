@@ -6,7 +6,7 @@ from typing import Optional, Tuple
 from django.db import transaction
 
 from .models import PendingTip
-from loyality.services import eligible_discount_for_user
+from loyalty.services import eligible_discount_for_user
 
 
 def _q2(x) -> Decimal:

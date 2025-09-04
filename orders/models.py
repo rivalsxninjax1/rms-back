@@ -299,10 +299,21 @@ class Cart(models.Model):
         help_text="Number of times cart has been modified"
     )
     
+    SOURCE_WEB = 'web'
+    SOURCE_MOBILE = 'mobile'
+    SOURCE_ADMIN = 'admin'
+    SOURCE_WAITER = 'waiter'
+    SOURCE_CHOICES = [
+        (SOURCE_WEB, 'Web'),
+        (SOURCE_MOBILE, 'Mobile'),
+        (SOURCE_ADMIN, 'Admin'),
+        (SOURCE_WAITER, 'Waiter'),
+    ]
     source = models.CharField(
         max_length=50,
-        default='web',
-        help_text="Cart creation source (web, mobile, api, etc.)"
+        choices=SOURCE_CHOICES,
+        default=SOURCE_WEB,
+        help_text="Cart creation source (web, mobile, admin, waiter)"
     )
     
     # Timestamps
@@ -1025,6 +1036,102 @@ class Order(models.Model):
         (STATUS_REFUNDED, "Refunded"),
     ]
 
+    # Simple workflow aliases for external callers/APIs
+    # pending -> in_progress -> served -> completed | cancelled
+    VALID_STATUS_TRANSITIONS = {
+        'pending': ['in_progress', 'cancelled'],
+        'in_progress': ['served', 'cancelled'],
+        'served': ['completed', 'cancelled'],
+        'completed': [],
+        'cancelled': [],
+    }
+
+    @staticmethod
+    def _simple_to_real(status: str) -> str:
+        s = (status or '').strip().lower()
+        mapping = {
+            'pending': Order.STATUS_PENDING,
+            'in_progress': Order.STATUS_PREPARING,
+            'served': Order.STATUS_READY,
+            'completed': Order.STATUS_COMPLETED,
+            'cancelled': Order.STATUS_CANCELLED,
+        }
+        # If already one of our real enums (case-insensitive), normalize it
+        real_values = {v.lower(): v for v in dict(Order.STATUS_CHOICES).keys()}
+        if s in real_values:
+            return real_values[s]
+        return mapping.get(s) or Order.STATUS_PENDING
+
+    @staticmethod
+    def _real_to_simple(status: str) -> str:
+        s = (status or '').strip().upper()
+        mapping = {
+            Order.STATUS_PENDING: 'pending',
+            Order.STATUS_CONFIRMED: 'in_progress',
+            Order.STATUS_PREPARING: 'in_progress',
+            Order.STATUS_READY: 'served',
+            Order.STATUS_OUT_FOR_DELIVERY: 'in_progress',
+            Order.STATUS_COMPLETED: 'completed',
+            Order.STATUS_CANCELLED: 'cancelled',
+            Order.STATUS_REFUNDED: 'cancelled',  # treat as terminal
+        }
+        return mapping.get(s, s.lower())
+
+    def transition_to(self, new_status: str, by_user=None):
+        """
+        Perform a validated status transition and record history + timestamps.
+        Accepts either simplified statuses (pending/in_progress/served/...) or
+        existing Order.STATUS_* values, case-insensitive.
+        """
+        from .signals import order_status_changed  # to avoid circulars
+
+        old_real = self.status
+        old_simple = self._real_to_simple(old_real)
+        new_simple = (new_status or '').strip().lower()
+        # Normalize if caller sent an existing enum
+        if new_simple in {v.lower() for v in dict(self.STATUS_CHOICES).keys()}:
+            new_simple = self._real_to_simple(new_status)
+
+        # Validate transition
+        allowed = self.VALID_STATUS_TRANSITIONS.get(old_simple, [])
+        if new_simple not in allowed:
+            from django.core.exceptions import ValidationError
+            raise ValidationError(f"Invalid transition from {old_simple} to {new_simple}")
+
+        # Map to real status and apply
+        new_real = self._simple_to_real(new_simple)
+        now = timezone.now()
+
+        # Update timestamps based on simplified state
+        if new_simple == 'in_progress' and not getattr(self, 'started_preparing_at', None):
+            self.started_preparing_at = now
+        elif new_simple == 'served' and not getattr(self, 'ready_at', None):
+            self.ready_at = now
+        elif new_simple == 'completed' and not getattr(self, 'completed_at', None):
+            self.completed_at = now
+        elif new_simple == 'cancelled' and not getattr(self, 'cancelled_at', None):
+            self.cancelled_at = now
+
+        self.status = new_real
+        self.save(update_fields=['status', 'started_preparing_at', 'ready_at', 'completed_at', 'cancelled_at', 'updated_at'])
+
+        # Write history
+        try:
+            OrderStatusHistory.objects.create(
+                order=self,
+                previous_status=old_real,
+                new_status=new_real,
+                changed_by=by_user,
+            )
+        except Exception:
+            pass
+
+        # Emit signal
+        try:
+            order_status_changed.send(sender=Order, order=self, old=old_real, new=new_real, by_user=by_user)
+        except Exception:
+            pass
+
     # Core identifiers
     order_uuid = models.UUIDField(
         default=uuid.uuid4,
@@ -1292,8 +1399,23 @@ class Order(models.Model):
 
     source = models.CharField(
         max_length=50,
-        default='web',
-        help_text="Order creation source (web, mobile, api, pos, etc.)"
+        choices=Cart.SOURCE_CHOICES,
+        default=Cart.SOURCE_WEB,
+        help_text="Order creation source (web, mobile, admin, waiter)"
+    )
+
+    # Sales channel for analytics/reporting
+    CHANNEL_ONLINE = 'ONLINE'
+    CHANNEL_IN_HOUSE = 'IN_HOUSE'
+    CHANNEL_CHOICES = [
+        (CHANNEL_ONLINE, 'Online'),
+        (CHANNEL_IN_HOUSE, 'In-house'),
+    ]
+    channel = models.CharField(
+        max_length=16,
+        choices=CHANNEL_CHOICES,
+        default=CHANNEL_ONLINE,
+        help_text="Sales channel (ONLINE vs IN_HOUSE)"
     )
 
     # Analytics and tracking
@@ -1519,6 +1641,46 @@ class Order(models.Model):
             self.save(update_fields=[
                 "subtotal", "tax_amount", "total_amount", "item_count", "updated_at"
             ])
+
+    # ---- Convenience helpers for admin/UI compatibility ----
+    def items_subtotal(self) -> Decimal:
+        """Return subtotal; fallback to computing from items if needed."""
+        try:
+            sub = Decimal(str(self.subtotal or 0))
+            if sub > 0:
+                return q2(sub)
+        except Exception:
+            pass
+        # Compute from items if subtotal is zero or missing
+        total = Decimal("0.00")
+        try:
+            for it in self.items.all():
+                line = Decimal(str(getattr(it, "line_total", 0) or 0))
+                if line <= 0:
+                    # fallback: (unit_price * qty) + modifier_total
+                    unit = Decimal(str(getattr(it, "unit_price", 0) or 0))
+                    qty = int(getattr(it, "quantity", 0) or 0)
+                    mods = Decimal(str(getattr(it, "modifier_total", 0) or 0))
+                    line = (unit * qty) + mods
+                total += line
+        except Exception:
+            return q2(Decimal("0.00"))
+        return q2(total)
+
+    def grand_total(self) -> Decimal:
+        """Return final total; compute without saving if not present."""
+        try:
+            tot = Decimal(str(self.total_amount or 0))
+            if tot > 0:
+                return q2(tot)
+        except Exception:
+            pass
+        # Compute without persisting
+        try:
+            self.calculate_totals(save=False)
+            return q2(Decimal(str(self.total_amount or 0)))
+        except Exception:
+            return q2(Decimal("0.00"))
     
     def update_status(self, new_status, user=None, reason="", notes="", request=None):
         """Update order status with timestamp tracking and audit trail."""
@@ -1683,15 +1845,23 @@ class Order(models.Model):
         return None
     
     @classmethod
-    def create_from_cart(cls, cart):
-        """Create order from cart with all details."""
+    def create_from_cart(cls, cart, user=None, notes: str | None = None, delivery_option: str | None = None):
+        """Create order from cart with all details. Optionally override user/notes/delivery_option.
+
+        Also sets channel based on delivery option (DINE_IN => IN_HOUSE, else ONLINE),
+        ensures initial status is pending, and writes an initial status history entry.
+        """
         with transaction.atomic():
+            # Compute final delivery option and channel
+            deliv = (delivery_option or cart.delivery_option)
+            channel = cls.CHANNEL_IN_HOUSE if deliv == Cart.DELIVERY_DINE_IN else cls.CHANNEL_ONLINE
+
             order = cls.objects.create(
-                user=cart.user,
+                user=user if user is not None else cart.user,
                 customer_name=cart.customer_name,
                 customer_phone=cart.customer_phone,
                 customer_email=cart.customer_email,
-                delivery_option=cart.delivery_option,
+                delivery_option=deliv,
                 table=cart.table,
                 delivery_address=cart.delivery_address,
                 delivery_instructions=cart.delivery_instructions,
@@ -1708,13 +1878,15 @@ class Order(models.Model):
                 tax_rate=cart.tax_rate,
                 total_amount=cart.total,
                 applied_coupon_code=cart.applied_coupon_code,
-                notes=cart.notes,
+                notes=(notes if notes is not None else cart.notes),
                 metadata=cart.metadata,
                 source_cart=cart,
                 source=cart.source,
-                item_count=cart.item_count
+                item_count=cart.item_count,
+                channel=channel,
+                status=cls.STATUS_PENDING,
             )
-            
+
             # Create order items from cart items
             for cart_item in cart.items.all():
                 OrderItem.objects.create(
@@ -1725,10 +1897,23 @@ class Order(models.Model):
                     modifiers=cart_item.get_modifier_details(),
                     notes=cart_item.notes
                 )
-            
+
+            # Initial history entry
+            try:
+                OrderStatusHistory.objects.create(
+                    order=order,
+                    previous_status=None,
+                    new_status=order.status,
+                    changed_by=(user if user is not None else cart.user),
+                    change_reason="created",
+                    notes="Initial status",
+                )
+            except Exception:
+                pass
+
             # Mark cart as converted
             cart.mark_converted()
-            
+
             return order
     
     def __str__(self):

@@ -7,13 +7,17 @@ interface LayoutProps {
 }
 
 const nav = [
-{ to: '/', label: 'Dashboard' },
-{ to: '/menu', label: 'Menu' },
-{ to: '/orders', label: 'Orders' },
-{ to: '/inventory', label: 'Inventory' },
-{ to: '/reservations', label: 'Reservations' },
-{ to: '/reports', label: 'Reports' },
-{ to: '/settings', label: 'Settings' },
+  { to: '/dashboard', label: 'Dashboard' },
+  { to: '/orders', label: 'Orders' },
+  { to: '/payments', label: 'Payments' },
+  { to: '/admin/reservations', label: 'Reservations' },
+  { to: '/admin/pos', label: 'POS' },
+  { to: '/menu', label: 'Menu' },
+  { to: '/coupons', label: 'Coupons' },
+  { to: '/loyalty', label: 'Loyalty' },
+  { to: '/reports', label: 'Reports' },
+  { to: '/settings', label: 'Settings' },
+  { to: '/users', label: 'Users' },
 ]
 
 export default function Layout({ children }: LayoutProps) {
@@ -32,7 +36,7 @@ onClick={clear}
 <aside className="border-r p-3">
 <nav className="space-y-1">
 {nav.map((n) => {
-  const isActive = n.to === '/' ? location.pathname === '/' : location.pathname.startsWith(n.to)
+  const isActive = location.pathname === n.to || location.pathname.startsWith(n.to + '/')
   return (
 <NavLink
 key={n.to}

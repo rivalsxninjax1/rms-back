@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import api from '../lib/api'
-import type { MenuCategory, MenuItem } from '../types/menu'
+import api from '../../lib/api'
+import type { MenuCategory, MenuItem } from '../../types/menu'
 
 interface MenuItemForm {
   name: string
@@ -9,6 +9,9 @@ interface MenuItemForm {
   price: number
   category: number
   is_available: boolean
+  available_from?: string
+  available_until?: string
+  image?: File | null
 }
 
 interface CategoryForm {
@@ -30,7 +33,10 @@ export default function Menu() {
     description: '',
     price: 0,
     category: 0,
-    is_available: true
+    is_available: true,
+    available_from: '',
+    available_until: '',
+    image: null,
   })
 
   const [categoryForm, setCategoryForm] = useState<CategoryForm>({
@@ -58,19 +64,33 @@ export default function Menu() {
 
   const createItem = useMutation({
     mutationFn: async (data: MenuItemForm) => {
-      const response = await api.post('/menu/items/', data)
+      const form = new FormData()
+      form.append('name', data.name)
+      form.append('description', data.description)
+      form.append('price', String(data.price))
+      form.append('category_id', String(data.category))
+      form.append('is_available', String(data.is_available))
+      if (data.available_from) form.append('available_from', data.available_from)
+      if (data.available_until) form.append('available_until', data.available_until)
+      if (data.image) form.append('image', data.image)
+      const response = await api.post('/menu/items/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
       return response.data
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['menu', 'items'] })
       setShowItemForm(false)
-      setItemForm({ name: '', description: '', price: 0, category: 0, is_available: true })
+      setItemForm({ name: '', description: '', price: 0, category: 0, is_available: true, available_from: '', available_until: '', image: null })
     },
   })
 
   const updateItem = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Partial<MenuItemForm> }) => {
-      const response = await api.patch(`/menu/items/${id}/`, data)
+      const form = new FormData()
+      Object.entries(data).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) form.append(k === 'category' ? 'category_id' : k, String(v as any))
+      })
+      if (data.image && data.image instanceof File) form.append('image', data.image)
+      const response = await api.patch(`/menu/items/${id}/`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
       return response.data
     },
     onSuccess: () => {
@@ -145,7 +165,10 @@ export default function Menu() {
       description: item.description || '',
       price: item.price,
       category: item.category,
-      is_available: item.is_available ?? true
+      is_available: item.is_available ?? true,
+      available_from: (item as any).available_from || '',
+      available_until: (item as any).available_until || '',
+      image: null,
     })
     setShowItemForm(true)
   }
@@ -172,6 +195,37 @@ export default function Menu() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-gray-900">Menu Management</h2>
         <div className="flex space-x-3">
+          <input id="csv-file" type="file" accept=".csv" className="hidden" onChange={async (e) => {
+            const f = e.target.files?.[0]
+            if (!f) return
+            const form = new FormData()
+            form.append('file', f)
+            await api.post('/menu/items/import_csv/', form, { headers: { 'Content-Type': 'multipart/form-data' } })
+            queryClient.invalidateQueries({ queryKey: ['menu', 'items'] })
+            e.currentTarget.value = ''
+          }} />
+          <button
+            onClick={() => document.getElementById('csv-file')?.click()}
+            className="px-3 py-2 bg-white border rounded hover:bg-gray-50"
+          >
+            Import CSV
+          </button>
+          <button
+            onClick={async () => {
+              const r = await api.get('/menu/items/export_csv/', { responseType: 'blob' })
+              const url = window.URL.createObjectURL(new Blob([r.data]))
+              const a = document.createElement('a')
+              a.href = url
+              a.download = 'menu_items.csv'
+              document.body.appendChild(a)
+              a.click()
+              a.remove()
+              window.URL.revokeObjectURL(url)
+            }}
+            className="px-3 py-2 bg-white border rounded hover:bg-gray-50"
+          >
+            Export CSV
+          </button>
           <button
             onClick={() => setShowCategoryForm(true)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -403,6 +457,63 @@ export default function Menu() {
                   ))}
                 </select>
               </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Available From</label>
+                  <input
+                    type="time"
+                    value={itemForm.available_from}
+                    onChange={(e) => setItemForm({ ...itemForm, available_from: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Available Until</label>
+                  <input
+                    type="time"
+                    value={itemForm.available_until}
+                    onChange={(e) => setItemForm({ ...itemForm, available_until: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Image</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (!f) return setItemForm({ ...itemForm, image: null })
+                    if (f.size > 3 * 1024 * 1024) {
+                      alert('Image too large (max 3MB).')
+                      e.currentTarget.value = ''
+                      return
+                    }
+                    setItemForm({ ...itemForm, image: f })
+                  }}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Available From</label>
+                  <input
+                    type="time"
+                    value={(categoryForm as any).available_from || ''}
+                    onChange={(e) => setCategoryForm({ ...categoryForm, available_from: e.target.value } as any)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Available Until</label>
+                  <input
+                    type="time"
+                    value={(categoryForm as any).available_until || ''}
+                    onChange={(e) => setCategoryForm({ ...categoryForm, available_until: e.target.value } as any)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
               <div className="flex items-center">
                 <input
                   type="checkbox"
@@ -421,7 +532,7 @@ export default function Menu() {
                   onClick={() => {
                     setShowItemForm(false)
                     setEditingItem(null)
-                    setItemForm({ name: '', description: '', price: 0, category: 0, is_available: true })
+                    setItemForm({ name: '', description: '', price: 0, category: 0, is_available: true, available_from: '', available_until: '', image: null })
                   }}
                   className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
                 >

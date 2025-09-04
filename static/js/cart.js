@@ -22,7 +22,13 @@ class CartManager {
     }
 
     bindEvents() {
-        // Cart close button (for sidebar if still used elsewhere)
+        // Cart toggle button
+        const cartToggle = document.getElementById('cartToggle');
+        if (cartToggle) {
+            cartToggle.addEventListener('click', () => this.toggleCart());
+        }
+
+        // Cart close button
         const cartClose = document.getElementById('cartClose');
         if (cartClose) {
             cartClose.addEventListener('click', () => this.closeCart());
@@ -34,10 +40,10 @@ class CartManager {
             checkoutBtn.addEventListener('click', () => this.proceedToCheckout());
         }
 
-        // Close cart when clicking outside (for sidebar if still used elsewhere)
+        // Close cart when clicking outside
         const cartSidebar = document.getElementById('cartSidebar');
         document.addEventListener('click', (e) => {
-            if (this.isOpen && cartSidebar && !cartSidebar.contains(e.target)) {
+            if (this.isOpen && cartSidebar && !cartSidebar.contains(e.target) && !e.target.closest('#cartToggle')) {
                 this.closeCart();
             }
         });
@@ -308,7 +314,7 @@ class CartManager {
             
             return `
                 <div class="cart-item" data-item-id="${item.id}">
-                    <img src="${item.menu_item.image || '/static/images/placeholder.svg'}" alt="${item.menu_item.name}" class="cart-item-image">
+                    <img src="${item.menu_item.image || '/static/images/placeholder.jpg'}" alt="${item.menu_item.name}" class="cart-item-image">
                     <div class="cart-item-info">
                         <div class="cart-item-name">${item.menu_item.name}</div>
                         <div class="cart-item-price">$${totalItemPrice.toFixed(2)}</div>

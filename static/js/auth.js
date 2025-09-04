@@ -18,12 +18,6 @@ class AuthManager {
             loginBtn.addEventListener('click', () => this.showAuthModal('login'));
         }
 
-        // Optional separate Sign up button
-        const signupBtn = document.getElementById('signupBtn');
-        if (signupBtn) {
-            signupBtn.addEventListener('click', () => this.showAuthModal('register'));
-        }
-
         // Auth modal close buttons
         const authClose = document.getElementById('authClose');
         if (authClose) {
@@ -31,7 +25,6 @@ class AuthManager {
         }
 
         // Auth toggle (switch between login/register)
-        // Use both direct binding (if present at load) and event delegation for robustness
         const authToggle = document.getElementById('authToggle');
         if (authToggle) {
             authToggle.addEventListener('click', (e) => {
@@ -39,13 +32,6 @@ class AuthManager {
                 this.toggleAuthMode();
             });
         }
-        document.addEventListener('click', (e) => {
-            const t = e.target;
-            if (t && t.id === 'authToggle') {
-                e.preventDefault();
-                this.toggleAuthMode();
-            }
-        });
 
         // Login form submission
         const loginForm = document.getElementById('loginForm');
@@ -206,10 +192,10 @@ class AuthManager {
         }
 
         const userData = {
-            username: formData.get('username'),
             first_name: formData.get('first_name'),
             last_name: formData.get('last_name'),
             email: formData.get('email'),
+            phone_number: formData.get('phone_number'),
             password: password
         };
 
@@ -320,7 +306,6 @@ const authManager = new AuthManager();
 
 // Export for global access
 window.authManager = authManager;
-window.openSignUpModal = () => authManager.showAuthModal('register');
 
 // Additional CSS for user menu (inject into head)
 const userMenuStyles = `

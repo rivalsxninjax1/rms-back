@@ -10,12 +10,14 @@ from django.urls import reverse
 from django.utils.html import format_html
 
 from .models import Order, OrderItem
+from .models import Cart
+from reports.models import AuditLog
 
-# Optional Payment inline (only if a payments.Payment model exists and FK->orders.Order)
+# Optional Billing Payment inline (manual/cash payments)
 try:
-    from payments.models import Payment  # type: ignore
+    from billing.models import Payment as BillingPayment  # type: ignore
 except Exception:
-    Payment = None
+    BillingPayment = None
 
 # Optional Reservations.Table for linking dine-in table
 try:
@@ -65,25 +67,17 @@ class OrderItemInline(admin.TabularInline):
 
 
 # Register Payment inline only if it truly has FK to orders.Order named "order"
-if Payment and any(getattr(f, "attname", "") == "order_id" for f in Payment._meta.get_fields()):  # type: ignore[attr-defined]
+if BillingPayment and any(getattr(f, "attname", "") == "order_id" for f in BillingPayment._meta.get_fields()):  # type: ignore[attr-defined]
     class PaymentInline(admin.StackedInline):
-        model = Payment
+        model = BillingPayment
         extra = 0
         can_delete = False
         fk_name = "order"
-        fields = tuple(
+        readonly_fields = tuple(
             f for f in (
-                "provider",
-                "amount",
-                "currency",
-                "is_paid",
-                "stripe_session_id",
-                "stripe_payment_intent",
-                "created_at",
-                "updated_at",
-            ) if hasattr(Payment, f)
+                "amount", "currency", "status", "reference", "created_at", "updated_at"
+            ) if hasattr(BillingPayment, f)
         )
-        readonly_fields = fields
 else:
     PaymentInline = None
 
@@ -121,13 +115,35 @@ class OrderAdmin(admin.ModelAdmin):
         _ro.append("invoice_pdf")
     if hasattr(Order, "applied_coupon_code"):
         _ro.append("applied_coupon_code")
-    readonly_fields = tuple(_ro)
+    # Harden: make money/tax/discount fields read-only in admin UI
+    _money_ro = [
+        'subtotal', 'modifier_total', 'discount_amount', 'coupon_discount',
+        'loyalty_discount', 'tip_amount', 'delivery_fee', 'service_fee',
+        'tax_amount', 'tax_rate', 'total_amount', 'refund_amount', 'item_count'
+    ]
+    readonly_fields = tuple([f for f in _ro if hasattr(Order, f)]) + tuple(
+        [f for f in _money_ro if hasattr(Order, f)]
+    )
 
-    # Avoid N+1 (items + menu_item + user + dine_in_table)
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        try:
+            AuditLog.log_action(request.user, 'UPDATE' if change else 'CREATE', f"Order {'updated' if change else 'created'}: #{obj.id}", content_object=obj, changes=form.changed_data, request=request, category='orders')
+        except Exception:
+            pass
+
+    def delete_model(self, request, obj):
+        try:
+            AuditLog.log_action(request.user, 'DELETE', f"Order deleted: #{obj.id}", content_object=obj, request=request, category='orders')
+        except Exception:
+            pass
+        super().delete_model(request, obj)
+
+    # Avoid N+1 (items + menu_item + user + table)
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         try:
-            qs = qs.select_related("user", "dine_in_table")
+            qs = qs.select_related("user", "table")
             qs = qs.prefetch_related("items__menu_item")
         except Exception:
             pass
@@ -149,7 +165,7 @@ class OrderAdmin(admin.ModelAdmin):
         """
         Render a friendly link to the dine-in table admin page if set.
         """
-        tbl = getattr(obj, "dine_in_table", None)
+        tbl = getattr(obj, "table", None)
         if not tbl:
             return "-"
         label = f"Table {getattr(tbl, 'table_number', '')}".strip() or f"Table #{getattr(tbl, 'id', '')}"
@@ -171,8 +187,8 @@ class OrderAdmin(admin.ModelAdmin):
         return obj.grand_total()
     grand_total_admin.short_description = "Grand Total"
 
-    # ---- CSV Export (aligned to your model)
-    actions = ["export_sales_csv"]
+    # ---- CSV Export and Cash Payment ----
+    actions = ["export_sales_csv", "record_cash_payment"]
 
     def export_sales_csv(self, request, queryset):
         response = HttpResponse(content_type="text/csv")
@@ -191,7 +207,7 @@ class OrderAdmin(admin.ModelAdmin):
                 o.created_at,
                 getattr(o.user, "username", "") if getattr(o, "user_id", None) else "",
                 getattr(o, "delivery_option", ""),
-                (f"Table {getattr(o.dine_in_table, 'table_number', '')}" if getattr(o, "dine_in_table_id", None) else ""),
+                (f"Table {getattr(o.table, 'table_number', '')}" if getattr(o, "table_id", None) else ""),
                 getattr(o, "status", ""),
                 str(o.items_subtotal()),
                 str(o.tip_amount),
@@ -199,8 +215,40 @@ class OrderAdmin(admin.ModelAdmin):
                 str(o.grand_total()),
                 (getattr(o, "currency", "USD") or "USD").upper(),
             ])
+        try:
+            AuditLog.log_action(request.user, 'EXPORT', f'Exported sales CSV ({queryset.count()} orders)', request=request, category='orders')
+        except Exception:
+            pass
         return response
     export_sales_csv.short_description = "Export Sales (CSV)"
+
+    def record_cash_payment(self, request, queryset):
+        """
+        Create a manual cash BillingPayment for selected orders for the full order total,
+        and mark payment_status as COMPLETED if the model has that field.
+        """
+        if not BillingPayment:
+            self.message_user(request, "Billing.Payment model not available", level=admin.messages.ERROR)
+            return
+        created = 0
+        for o in queryset:
+            try:
+                amt = getattr(o, "total_amount", None) or getattr(o, "total", None)
+                if amt is None:
+                    continue
+                BillingPayment.objects.create(order=o, amount=amt, currency=getattr(o, "currency", "USD"), status="completed", reference="cash")
+                if hasattr(o, "payment_status"):
+                    setattr(o, "payment_status", "COMPLETED")
+                    o.save(update_fields=["payment_status", "updated_at"]) if hasattr(o, "updated_at") else o.save()
+                created += 1
+            except Exception:
+                continue
+        self.message_user(request, f"Recorded cash payments for {created} order(s)", level=admin.messages.INFO)
+        try:
+            AuditLog.log_action(request.user, 'UPDATE', f'Recorded cash payments for {created} orders', request=request, category='orders')
+        except Exception:
+            pass
+    record_cash_payment.short_description = "Record Cash Payment (full)"
 
 
 # ---------------------------------------------------------------------------
@@ -242,3 +290,24 @@ class DiscountRuleAdmin(admin.ModelAdmin):
     ordering = tuple(col for col in ("sort_order", "-threshold_cents", "id") if hasattr(DiscountRule, col))  # type: ignore
 
 _safe_register(DiscountRule, DiscountRuleAdmin)
+
+
+# ---------------------------------------------------------------------------
+# Cart admin (read-only money fields)
+# ---------------------------------------------------------------------------
+
+@admin.register(Cart)
+class CartAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'cart_uuid', 'user', 'status', 'delivery_option', 'item_count', 'total', 'updated_at'
+    )
+    search_fields = ('=id', '=cart_uuid', 'user__username', 'user__email')
+    list_filter = ('status', 'delivery_option', 'updated_at')
+    readonly_fields = tuple(
+        f for f in (
+            'cart_uuid', 'user', 'subtotal', 'modifier_total', 'discount_amount',
+            'coupon_discount', 'loyalty_discount', 'tip_amount', 'tip_percentage',
+            'delivery_fee', 'service_fee', 'tax_amount', 'tax_rate', 'total',
+            'item_count', 'modification_count', 'created_at', 'updated_at'
+        ) if hasattr(Cart, f)
+    )

@@ -128,7 +128,27 @@ class CartItemSerializer(serializers.ModelSerializer):
         return instance
 
 
-class CartSerializer(serializers.ModelSerializer):
+class _ForbidWriteFieldsMixin:
+    """Mixin that raises a validation error if client tries to set read-only money fields.
+
+    DRF normally ignores read_only_fields on write; for security we explicitly detect
+    tampering attempts and return 400 with a helpful message.
+    """
+
+    # Override per subclass
+    FORBIDDEN_WRITE_FIELDS: tuple[str, ...] = tuple()
+
+    def validate(self, attrs):
+        data = getattr(self, 'initial_data', {}) or {}
+        forbidden = [k for k in self.FORBIDDEN_WRITE_FIELDS if k in data]
+        if forbidden:
+            raise serializers.ValidationError({
+                'forbidden_fields': f"These fields are read-only and cannot be set: {', '.join(sorted(set(forbidden)))}"
+            })
+        return super().validate(attrs) if hasattr(super(), 'validate') else attrs
+
+
+class CartSerializer(_ForbidWriteFieldsMixin, serializers.ModelSerializer):
     """
     Enhanced serializer for carts with comprehensive validation.
     """
@@ -159,6 +179,15 @@ class CartSerializer(serializers.ModelSerializer):
             'total_discount', 'estimated_total_with_tax', 'can_be_modified',
             'created_at', 'updated_at', 'last_activity', 'converted_at', 'abandoned_at'
         ]
+    # Hardened: prevent client from attempting to set server-calculated money fields
+    FORBIDDEN_WRITE_FIELDS = (
+        'subtotal', 'modifier_total',
+        'discount_amount', 'coupon_discount', 'loyalty_discount',
+        'tip_amount', 'tip_percentage',
+        'delivery_fee', 'service_fee',
+        'tax_amount', 'tax_rate',
+        'total', 'item_count', 'modification_count',
+    )
     
     def get_item_count(self, obj):
         """Get total number of items in cart."""
@@ -339,7 +368,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             return None
 
 
-class OrderSerializer(serializers.ModelSerializer):
+class OrderSerializer(_ForbidWriteFieldsMixin, serializers.ModelSerializer):
     """
     Enhanced serializer for orders with comprehensive details.
     """
@@ -352,6 +381,8 @@ class OrderSerializer(serializers.ModelSerializer):
     can_be_refunded = serializers.SerializerMethodField()
     is_overdue = serializers.SerializerMethodField()
     preparation_time = serializers.SerializerMethodField()
+    status_timeline = serializers.SerializerMethodField()
+    channel = serializers.CharField(read_only=True)
     
     class Meta:
         model = Order
@@ -363,14 +394,25 @@ class OrderSerializer(serializers.ModelSerializer):
             'total_amount', 'refund_amount', 'notes', 'items', 'item_count',
             'delivery_address', 'delivery_instructions', 'estimated_delivery_time',
             'actual_delivery_time', 'customer_name', 'customer_phone', 'customer_email',
-            'applied_coupon_code', 'source', 'can_be_cancelled', 'can_be_refunded',
-            'is_overdue', 'preparation_time', 'created_at', 'updated_at'
+            'applied_coupon_code', 'source', 'channel', 'can_be_cancelled', 'can_be_refunded',
+            'is_overdue', 'preparation_time', 'status_timeline', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'order_uuid', 'order_number', 'user', 'subtotal', 'modifier_total',
-            'tax_amount', 'total_amount', 'total_discount', 'can_be_cancelled',
-            'can_be_refunded', 'is_overdue', 'preparation_time', 'created_at', 'updated_at'
+            'discount_amount', 'coupon_discount', 'loyalty_discount',
+            'tip_amount', 'delivery_fee', 'service_fee',
+            'tax_amount', 'tax_rate', 'total_amount', 'refund_amount',
+            'total_discount', 'can_be_cancelled', 'can_be_refunded',
+            'is_overdue', 'preparation_time', 'created_at', 'updated_at'
         ]
+    # Hardened: prevent client from attempting to set server-calculated money fields
+    FORBIDDEN_WRITE_FIELDS = (
+        'subtotal', 'modifier_total',
+        'discount_amount', 'coupon_discount', 'loyalty_discount',
+        'tip_amount', 'delivery_fee', 'service_fee',
+        'tax_amount', 'tax_rate', 'total_amount', 'refund_amount',
+        'item_count',
+    )
     
     def get_item_count(self, obj):
         """Get total number of items in order."""
@@ -402,6 +444,21 @@ class OrderSerializer(serializers.ModelSerializer):
         except AttributeError:
             return None
 
+    def get_status_timeline(self, obj):
+        try:
+            events = obj.status_history.order_by('created_at')
+            out = []
+            for e in events:
+                out.append({
+                    'from_status': e.previous_status,
+                    'to_status': e.new_status,
+                    'by_user': getattr(e.changed_by, 'id', None),
+                    'at': e.created_at,
+                })
+            return out
+        except Exception:
+            return []
+
 
 class OrderCreateSerializer(serializers.Serializer):
     """
@@ -423,55 +480,12 @@ class OrderCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError("Cart does not exist.")
     
     def create(self, validated_data):
-        """Create order from cart."""
+        """Create order from cart using the canonical factory method."""
         cart_uuid = validated_data['cart_uuid']
         cart = Cart.objects.get(cart_uuid=cart_uuid)
-        
-        # Create order from cart
-        order = Order.objects.create(
-            user=cart.user,
-            delivery_option=cart.delivery_option,
-            table=cart.table,
-            subtotal=cart.subtotal,
-            modifier_total=cart.modifier_total,
-            tip_amount=cart.tip_amount,
-            discount_amount=cart.discount_amount,
-            tax_amount=cart.tax_amount,
-            total_amount=cart.total,
-            notes=validated_data.get('notes', cart.notes),
-            source_cart=cart
-        )
-        
-        # Convert cart items to order items
-        for cart_item in cart.items.all():
-            # Convert modifiers to include prices
-            order_modifiers = []
-            for modifier_data in cart_item.selected_modifiers:
-                try:
-                    modifier = Modifier.objects.get(id=modifier_data['modifier_id'])
-                    order_modifiers.append({
-                        'modifier_id': modifier.id,
-                        'name': modifier.name,
-                        'price': str(modifier.price),
-                        'quantity': modifier_data.get('quantity', 1)
-                    })
-                except Modifier.DoesNotExist:
-                    continue
-            
-            OrderItem.objects.create(
-                order=order,
-                menu_item=cart_item.menu_item,
-                quantity=cart_item.quantity,
-                unit_price=cart_item.unit_price,
-                modifiers=order_modifiers,
-                notes=cart_item.notes
-            )
-        
-        # Mark cart as converted
-        cart.status = Cart.STATUS_CONVERTED
-        cart.save()
-        
-        return order
+        request = self.context.get('request')
+        user = request.user if request and request.user.is_authenticated else None
+        return Order.create_from_cart(cart=cart, user=user, notes=validated_data.get('notes'))
 
 
 class OrderListSerializer(serializers.ModelSerializer):

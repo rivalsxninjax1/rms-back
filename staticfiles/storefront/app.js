@@ -11,11 +11,15 @@ function money(n) {
   return num.toFixed(2);
 }
 
-function getCookie(name) {
-  // CSRF helper (Django default)
+function csrfToken() {
+  // Prefer hidden input (works with HttpOnly CSRF cookies), then fallback to cookie
+  try {
+    const inp = document.querySelector('input[name="csrfmiddlewaretoken"]');
+    if (inp && inp.value) return inp.value;
+  } catch(_) {}
   const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop().split(";").shift();
+  const parts = value.split(`; csrftoken=`);
+  if (parts.length === 2) return decodeURIComponent(parts.pop().split(";").shift() || "");
   return "";
 }
 
@@ -24,7 +28,7 @@ function jsonFetch(url, opts = {}) {
     headers: {
       "Content-Type": "application/json",
       "X-Requested-With": "XMLHttpRequest",
-      "X-CSRFToken": getCookie("csrftoken") || "",
+      "X-CSRFToken": csrfToken(),
     },
     credentials: "include",
   };

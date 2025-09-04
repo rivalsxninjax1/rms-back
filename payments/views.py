@@ -22,6 +22,9 @@ from rest_framework.response import Response
 
 from menu.models import MenuItem
 from .models import Order, OrderItem, StripePaymentIntent
+from billing.models import Payment
+from billing.serializers import OfflinePaymentCreateSerializer
+from payments.post_payment import order_paid as signal_order_paid
 from .services import (
     checkout_session_from_order,
     mark_order_as_paid,
@@ -63,7 +66,7 @@ def _rank_tip_cents_for_user(user) -> int:
     ALWAYS respect the client's choice (including zero).
     """
     try:
-        from loyality.models import LoyaltyProfile  # app name as in INSTALLED_APPS
+        from loyalty.models import LoyaltyProfile  # canonical app path (label unchanged)
         if not (user and getattr(user, "is_authenticated", False)):
             return 0
         lp = LoyaltyProfile.objects.select_related("rank").filter(user=user).first()
@@ -264,6 +267,54 @@ def checkout(request: HttpRequest) -> JsonResponse:
                 "order_id": order.id,
             }
         )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def offline_payment(request: HttpRequest) -> Response:
+    """
+    Record an offline payment for an order.
+    Body: { order_id, method: 'cash'|'pos_card', amount, notes? }
+    Requires authenticated user (recommended staff-only at router).
+    """
+    ser = OfflinePaymentCreateSerializer(data=request.data)
+    if not ser.is_valid():
+        return Response(ser.errors, status=400)
+    data = ser.validated_data
+    order_id = data['order_id']
+    try:
+        from orders.models import Order as CoreOrder
+        order = CoreOrder.objects.get(id=int(order_id))
+    except Exception:
+        return Response({'detail': 'Order not found'}, status=404)
+
+    # Create Payment
+    pay = Payment.objects.create(
+        order=order,
+        amount=data['amount'],
+        currency=(getattr(settings, 'STRIPE_CURRENCY', 'usd') or 'usd').upper(),
+        method=data['method'],
+        status='captured',
+        external_ref=None,
+        notes=str(data.get('notes') or ''),
+        created_by=request.user,
+    )
+
+    # Mark order's payment_status (leave status transitions to UI/workflow)
+    try:
+        if hasattr(order, 'payment_status'):
+            order.payment_status = 'COMPLETED'
+            order.save(update_fields=['payment_status'])
+    except Exception:
+        pass
+
+    # Emit order_paid for hooks (ticketing/invoice, etc.)
+    try:
+        signal_order_paid.send(sender=order.__class__, order=order, payment=pay, request=request)
+    except Exception:
+        logger.exception('Failed emitting order_paid for offline payment, order %s', order.id)
+
+    return Response({'ok': True, 'payment_id': pay.id})
 
     # Real Stripe checkout
     try:
@@ -760,7 +811,20 @@ def webhook(request: HttpRequest) -> HttpResponse:
                 order.stripe_payment_intent = str(payment_intent)
             order.status = "paid"
             order.save(update_fields=["status", "stripe_payment_intent"])
-            
+            # Create captured payment record
+            try:
+                Payment.objects.create(
+                    order=order,
+                    amount=getattr(order, 'total_cents', 0) / 100 if hasattr(order, 'total_cents') else getattr(order, 'total', 0),
+                    currency=(settings.STRIPE_CURRENCY or 'usd').upper(),
+                    method='stripe',
+                    status='captured',
+                    external_ref=str(payment_intent) if payment_intent else None,
+                    notes='Stripe checkout.session.completed',
+                )
+            except Exception:
+                logger.exception('Failed to create Billing Payment for order %s on checkout.session.completed', getattr(order, 'id', None))
+
             # Clear session cart for the user after successful payment
             _clear_user_session_cart(order.created_by)
             
@@ -776,7 +840,20 @@ def webhook(request: HttpRequest) -> HttpResponse:
                 if order.status != "paid":
                     order.status = "paid"
                     order.save(update_fields=["status"])
-                    
+                    # Create captured payment record
+                    try:
+                        Payment.objects.create(
+                            order=order,
+                            amount=getattr(order, 'total_cents', 0) / 100 if hasattr(order, 'total_cents') else getattr(order, 'total', 0),
+                            currency=(settings.STRIPE_CURRENCY or 'usd').upper(),
+                            method='stripe',
+                            status='captured',
+                            external_ref=str(pi_id),
+                            notes='Stripe payment_intent.succeeded',
+                        )
+                    except Exception:
+                        logger.exception('Failed to create Billing Payment for order %s on payment_intent.succeeded', getattr(order, 'id', None))
+
                     # Clear session cart for the user after successful payment
                     _clear_user_session_cart(order.created_by)
                     

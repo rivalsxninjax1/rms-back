@@ -145,6 +145,7 @@ if os.getenv("USE_JSON_LOGGING", "0") == "1":
         "maxBytes": 1024 * 1024 * 15,  # 15MB
         "backupCount": 10,
         "formatter": "json",
+        "filters": ["request_id"],
     }
     
     # Update loggers to use JSON logging

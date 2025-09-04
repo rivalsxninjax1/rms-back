@@ -10,8 +10,12 @@
     <input type="date" id="res-date" required class="form-control" />
   </div>
   <div>
-    <label>Time</label>
-    <input type="time" id="res-time" required class="form-control" />
+    <label>Start Time</label>
+    <input type="time" id="res-time" required class="form-control" step="900" />
+  </div>
+  <div>
+    <label>End Time</label>
+    <input type="time" id="res-end" required class="form-control" step="900" />
   </div>
   <div style="grid-column: 1/-1;">
     <label>Party size</label>
@@ -42,7 +46,7 @@
 <div id="res-status" class="mt-2" style="color:#b00;"></div>
 
 <script>
-(function(){
+  (function(){
   const $ = (sel, el=document) => el.querySelector(sel);
   const grid = $("#tables-grid");
   const status = $("#res-status");
@@ -52,17 +56,120 @@
   const nameI = $("#res-name");
   const phoneI = $("#res-phone");
   const emailI = $("#res-email");
+  const endT = $("#res-end");
 
   const now = new Date();
   d.value = now.toISOString().slice(0,10);
-  t.value = new Date(now.getTime() + 30*60000).toISOString().slice(11,16);
+  // Default to current time for start, +90 min for end
+  t.value = now.toISOString().slice(11,16);
+  const defaultEnd = new Date(now.getTime() + 90*60000);
+  endT.value = defaultEnd.toISOString().slice(11,16);
+
+  // Set min date/time (15 min lead)
+  function clampMinStart(){
+    const lead = new Date(Date.now() + 15*60000);
+    const today = new Date();
+    const selDate = new Date(d.value + 'T00:00');
+    // min date is today
+    d.min = today.toISOString().slice(0,10);
+    if (selDate.toDateString() === today.toDateString()){
+      // if today selected, enforce min start time
+      const minStr = lead.toISOString().slice(11,16);
+      t.min = minStr;
+      if (t.value && t.value < minStr){ t.value = minStr; }
+    } else {
+      t.min = '';
+    }
+  }
+  clampMinStart();
+
+  // Handle Stripe redirect deposit confirmation
+  (function handleDepositReturn(){
+    try{
+      const params = new URLSearchParams(location.search);
+      if (params.get('deposit') === 'success' && params.get('session_id')){
+        status.style.color = '#166534';
+        status.textContent = 'Verifying deposit...';
+        fetch(`/reserve/api/deposits/success/?session_id=${encodeURIComponent(params.get('session_id'))}`, {credentials:'include'})
+          .then(r=>r.json()).then(data=>{
+            if (data && data.ok){
+              status.style.color = '#166534';
+              status.textContent = 'Deposit received. Your reservation is secured.';
+              // Remove query params from URL
+              const clean = location.pathname;
+              history.replaceState(null, '', clean);
+              loadAvailability();
+            } else {
+              status.style.color = '#b00';
+              status.textContent = (data && data.detail) ? data.detail : 'Could not verify deposit.';
+            }
+          }).catch(()=>{
+            status.style.color = '#b00';
+            status.textContent = 'Could not verify deposit.';
+          });
+      }
+    }catch(_){ /* ignore */ }
+  })();
+
+  function combine(dateStr, timeStr){
+    // Create local Date from yyyy-mm-dd + HH:MM
+    try { return new Date(dateStr + 'T' + timeStr); } catch(_) { return null; }
+  }
+
+  function extractErrorMessage(data){
+    if (!data) return 'Request failed. Please try again.';
+    if (typeof data.detail === 'string' && data.detail) return data.detail;
+    if (Array.isArray(data.non_field_errors) && data.non_field_errors.length) return data.non_field_errors[0];
+    const keys = Object.keys(data);
+    if (keys.length && Array.isArray(data[keys[0]]) && data[keys[0]].length){
+      return String(data[keys[0]][0]);
+    }
+    return 'Something went wrong. Please check your inputs.';
+  }
+
+  function validateTimes({autofix=false}={}){
+    const start = combine(d.value, t.value);
+    const end = combine(d.value, endT.value);
+    if (!start || !end){ return false; }
+    // If end <= start, autofix to +90m or show error
+    if (end <= start){
+      if (autofix){
+        const fixed = new Date(start.getTime() + 90*60000);
+        endT.value = fixed.toISOString().slice(11,16);
+        status.style.color = '#b00';
+        status.textContent = 'Adjusted end time to be after start (+90m). Tip: time uses 24-hour format (e.g., 17:00 for 5 PM).';
+        return true;
+      }
+      status.style.color = '#b00';
+      status.textContent = 'End time must be after start time. Tip: time uses 24-hour format (e.g., 17:00 for 5 PM).';
+      return false;
+    }
+    // Clear status when valid
+    status.textContent = '';
+    return true;
+  }
+
+  function renderSkeleton(){
+    grid.innerHTML = '';
+    for (let i=0;i<8;i++){
+      const sk = document.createElement('div');
+      sk.className = 'card';
+      sk.style.cssText = 'height:90px;border:1px solid #222;background:#14151d;opacity:.6;animation:pulse 1.2s infinite ease-in-out;border-radius:8px;';
+      grid.appendChild(sk);
+    }
+  }
 
   async function loadAvailability() {
-    if (!d.value || !t.value) return;
-    const qs = new URLSearchParams({ date: d.value, time: t.value });
+    if (!d.value || !t.value || !endT.value) return;
+    clampMinStart();
+    if (!validateTimes({autofix:true})) return;
+    const qs = new URLSearchParams({ date: d.value, time: t.value, end: endT.value });
+    renderSkeleton();
     const res = await fetch(`/reserve/api/availability/?${qs.toString()}`, { credentials: "include" });
-    if (!res.ok) { status.textContent = "Unable to load availability."; return; }
-    renderGrid(await res.json());
+    let data = null;
+    try { data = await res.json(); } catch(_) {}
+    if (!res.ok) { status.style.color='#b00'; status.textContent = extractErrorMessage(data) || "Unable to load availability."; if (window.showToast) showToast(status.textContent,'error'); return; }
+    renderGrid(data);
   }
 
   function renderGrid(rows) {
@@ -91,16 +198,21 @@
 
   async function confirmReservation(row) {
     status.style.color = "#b00";
+    if (!validateTimes({autofix:true})) { return; }
     status.textContent = "Booking...";
     const payload = {
       table_id: row.id,
       date: d.value,
       time: t.value,
+      end_time: endT.value,
       party_size: parseInt(party.value || "1", 10),
       customer_name: (nameI.value || "").trim(),
       customer_phone: (phoneI.value || "").trim(),
       customer_email: (emailI.value || "").trim(),
     };
+    // Disable all cards while booking
+    const cards = Array.from(grid.querySelectorAll('.btn'));
+    cards.forEach(b=> b.disabled = true);
     const res = await fetch("/reserve/api/reservations/", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRFToken": csrfToken() },
@@ -109,18 +221,56 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      status.textContent = data.detail || "Could not create reservation. Try another time/table.";
+      status.textContent = extractErrorMessage(data) || "Could not create reservation. Try another time/table.";
+      if (window.showToast) showToast(status.textContent,'error');
+      cards.forEach(b=> b.disabled = (b.getAttribute('disabled')==='true') ? true : false);
+      return;
+    }
+    // If a deposit is required, handle Stripe redirect or show error
+    if (data && data.deposit_required) {
+      if (data.checkout_url) {
+        status.style.color = '#0b5';
+        status.textContent = `Redirecting to secure payment for deposit ($${data.deposit_amount?.toFixed ? data.deposit_amount.toFixed(2) : data.deposit_amount})...`;
+        window.location.href = data.checkout_url;
+        return;
+      }
+      // Stripe session failed to create on server; surface error to user
+      status.style.color = '#b00';
+      status.textContent = (data.error && String(data.error)) || 'Could not start payment for the reservation deposit. Please try again.';
+      if (window.showToast) showToast(status.textContent,'error');
+      cards.forEach(b=> b.disabled = false);
+  // Remember contact details locally for convenience
+  try{
+    const saved = JSON.parse(localStorage.getItem('reserve_contact')||'null');
+    if (saved){
+      if (saved.name) nameI.value = saved.name;
+      if (saved.phone) phoneI.value = saved.phone;
+      if (saved.email) emailI.value = saved.email;
+    }
+    const persist = ()=>{
+      const data = { name: nameI.value.trim(), phone: phoneI.value.trim(), email: emailI.value.trim() };
+      localStorage.setItem('reserve_contact', JSON.stringify(data));
+    };
+    nameI.addEventListener('input', persist);
+    phoneI.addEventListener('input', persist);
+    emailI.addEventListener('input', persist);
+  }catch(_){ /* ignore */ }
       return;
     }
     status.style.color = "#166534";
     status.textContent = "Reservation confirmed!";
+    if (window.showToast) showToast('Reservation confirmed!','success');
     loadAvailability();
   }
 
   d.addEventListener("change", loadAvailability);
-  t.addEventListener("change", loadAvailability);
+  t.addEventListener("change", ()=>{ validateTimes({autofix:true}); loadAvailability(); });
+  endT.addEventListener("change", loadAvailability);
   loadAvailability();
-  setInterval(loadAvailability, 5000);
+  // Poll less frequently and only when tab is visible
+  setInterval(() => { if (!document.hidden) loadAvailability(); }, 15000);
+  // Refresh immediately when tab becomes visible
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) loadAvailability(); });
 })();
 </script>
 {% endblock %}

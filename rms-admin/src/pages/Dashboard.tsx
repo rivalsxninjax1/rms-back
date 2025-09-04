@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '../lib/api'
 
 interface DashboardStats {
@@ -20,6 +21,7 @@ interface RecentOrder {
 }
 
 export default function Dashboard() {
+  // const qc = useQueryClient()
   const stats = useQuery({
     queryKey: ['dashboard', 'stats'],
     queryFn: async () => {
@@ -52,6 +54,23 @@ export default function Dashboard() {
       }
     },
     refetchInterval: 10000, // Refresh every 10 seconds
+  })
+
+  const todayISO = new Date().toISOString().slice(0,10)
+  const ordersOverview = useQuery({
+    queryKey: ['analytics','orders','overview','today'],
+    queryFn: async () => (await api.get('/analytics/orders/overview?days=1')).data,
+    refetchInterval: 10000,
+  })
+  const salesByMethod = useQuery({
+    queryKey: ['reports','daily-sales','payments', todayISO],
+    queryFn: async () => (await api.get(`/reports/daily-sales/payments?date_from=${todayISO}&date_to=${todayISO}`)).data?.results || [],
+    refetchInterval: 15000,
+  })
+  const reservationsToday = useQuery({
+    queryKey: ['reservations','today', todayISO],
+    queryFn: async () => (await api.get(`/reservations/?reservation_date=${todayISO}`)).data || [],
+    refetchInterval: 15000,
   })
 
   const formatCurrency = (amount: number) => {
@@ -183,7 +202,85 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* Live Orders by Status */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <div className="text-sm font-medium text-gray-600">Live Orders</div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            {(() => {
+              const br = ordersOverview.data?.status_breakdown || []
+              const get = (k:string) => br.find((x:any)=> (x.status||'').toUpperCase()===k)?.count || 0
+              const pending = get('PENDING')
+              const inprog = get('CONFIRMED') + get('PREPARING') + get('OUT_FOR_DELIVERY')
+              const served = get('READY')
+              const completed = get('COMPLETED')
+              const cancelled = get('CANCELLED') + get('REFUNDED')
+              return (
+                <>
+                  <div className="flex items-center justify-between"><span>Pending</span><span className="font-semibold">{pending}</span></div>
+                  <div className="flex items-center justify-between"><span>In Progress</span><span className="font-semibold">{inprog}</span></div>
+                  <div className="flex items-center justify-between"><span>Served</span><span className="font-semibold">{served}</span></div>
+                  <div className="flex items-center justify-between"><span>Completed</span><span className="font-semibold">{completed}</span></div>
+                  <div className="flex items-center justify-between"><span>Cancelled</span><span className="font-semibold">{cancelled}</span></div>
+                </>
+              )
+            })()}
+          </div>
+        </div>
+
+        {/* Today’s Sales by Method */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <div className="text-sm font-medium text-gray-600">Today's Sales</div>
+          <div className="mt-3 space-y-1 text-sm">
+            {(() => {
+              const rows = salesByMethod.data || []
+              const sum = (m:string) => {
+                const r = rows.find((x:any)=> (x.method||'')===m)
+                return r ? r.total : 0
+              }
+              const cash = sum('cash') || 0
+              const pos = sum('pos_card') || 0
+              const stripe = sum('stripe') || 0
+              return (
+                <>
+                  <div className="flex items-center justify-between"><span>Cash</span><span className="font-semibold">{formatCurrency(cash)}</span></div>
+                  <div className="flex items-center justify-between"><span>POS Card</span><span className="font-semibold">{formatCurrency(pos)}</span></div>
+                  <div className="flex items-center justify-between"><span>Stripe</span><span className="font-semibold">{formatCurrency(stripe)}</span></div>
+                </>
+              )
+            })()}
+          </div>
+        </div>
+
+        {/* Avg Prep Time */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <div className="text-sm font-medium text-gray-600">Avg Prep Time</div>
+          <div className="mt-2 text-2xl font-semibold text-gray-900">—</div>
+          <div className="text-xs text-gray-500">Between start preparing and ready.</div>
+        </div>
+
+        {/* Reservations */}
+        <div className="bg-white p-6 rounded-lg shadow-sm border">
+          <div className="text-sm font-medium text-gray-600">Reservations</div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+            {(() => {
+              const list = reservationsToday.data || []
+              const now = Date.now()
+              const active = list.filter((r:any)=> new Date(r.start_time).getTime() <= now && new Date(r.end_time).getTime() > now && !['cancelled','no_show','completed'].includes(String(r.status||'').toLowerCase())).length
+              const today = list.length
+              return (
+                <>
+                  <div className="flex items-center justify-between"><span>Now</span><span className="font-semibold">{active}</span></div>
+                  <div className="flex items-center justify-between"><span>Today</span><span className="font-semibold">{today}</span></div>
+                </>
+              )
+            })()}
+          </div>
+        </div>
       </div>
+
+      {/* Shift Control */}
+      <ShiftControl todayISO={todayISO} />
 
       {/* Recent Orders */}
       <div className="bg-white rounded-lg shadow-sm border">
@@ -218,6 +315,64 @@ export default function Dashboard() {
               </div>
             ))
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ShiftControl({ todayISO }: { todayISO: string }) {
+  const qc = useQueryClient()
+  const open = useMutation({
+    mutationFn: ({ shift, staff, cash_open_cents }: { shift: string; staff: string; cash_open_cents: number }) =>
+      api.post('/reports/shifts/open/', { date: todayISO, shift, staff, cash_open_cents }).then(r=>r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['reports','shifts', todayISO] })
+  })
+  const closeM = useMutation({
+    mutationFn: ({ shift, cash_close_cents, cash_sales_cents, notes }: { shift: string; cash_close_cents: number; cash_sales_cents: number; notes?: string }) =>
+      api.post('/reports/shifts/close/', { date: todayISO, shift, cash_close_cents, cash_sales_cents, notes: notes||'' }).then(r=>r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['reports','shifts', todayISO] })
+  })
+
+  const [shift, setShift] = useState('evening') as any
+  const [staff, setStaff] = useState('')
+  const [openAmt, setOpenAmt] = useState('0')
+  const [closeAmt, setCloseAmt] = useState('0')
+  const [cashSales, setCashSales] = useState('0')
+  const [notes, setNotes] = useState('')
+
+  return (
+    <div className="bg-white rounded-lg shadow-sm border p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-lg font-medium text-gray-900">Shift Control</h3>
+        <div className="text-xs text-gray-500">{todayISO}</div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Open Shift</div>
+          <label className="text-xs text-gray-600">Shift
+            <input className="mt-1 w-full border rounded px-2 py-1" value={shift} onChange={(e)=>setShift(e.target.value)} />
+          </label>
+          <label className="text-xs text-gray-600">Staff
+            <input className="mt-1 w-full border rounded px-2 py-1" value={staff} onChange={(e)=>setStaff(e.target.value)} />
+          </label>
+          <label className="text-xs text-gray-600">Cash Float (¢)
+            <input type="number" className="mt-1 w-full border rounded px-2 py-1" value={openAmt} onChange={(e)=>setOpenAmt(e.target.value)} />
+          </label>
+          <button className="px-3 py-1 bg-indigo-600 text-white rounded" disabled={open.isPending} onClick={()=>open.mutate({ shift, staff, cash_open_cents: parseInt(openAmt||'0',10) })}>Open</button>
+        </div>
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Close Shift</div>
+          <label className="text-xs text-gray-600">Cash Close (¢)
+            <input type="number" className="mt-1 w-full border rounded px-2 py-1" value={closeAmt} onChange={(e)=>setCloseAmt(e.target.value)} />
+          </label>
+          <label className="text-xs text-gray-600">Cash Sales (¢)
+            <input type="number" className="mt-1 w-full border rounded px-2 py-1" value={cashSales} onChange={(e)=>setCashSales(e.target.value)} />
+          </label>
+          <label className="text-xs text-gray-600">Notes
+            <input className="mt-1 w-full border rounded px-2 py-1" value={notes} onChange={(e)=>setNotes(e.target.value)} />
+          </label>
+          <button className="px-3 py-1 bg-green-600 text-white rounded" disabled={closeM.isPending} onClick={()=>closeM.mutate({ shift, cash_close_cents: parseInt(closeAmt||'0',10), cash_sales_cents: parseInt(cashSales||'0',10), notes })}>Close</button>
         </div>
       </div>
     </div>

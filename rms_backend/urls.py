@@ -4,9 +4,20 @@ from __future__ import annotations
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import include, path
+from django.contrib.auth import views as auth_views
+from django.urls import include, path, re_path
+from django.views.generic import TemplateView
+from django.contrib.auth.decorators import login_required
+from django.utils.decorators import method_decorator
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from core.views import storefront_redirect, storefront_view, cart_view
+
+class AdminSPAView(TemplateView):
+    template_name = "rms_admin_spa/index.html"
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        return context
 urlpatterns = [
     # Django-rendered Storefront at root
     path("", include(("storefront.urls", "storefront"), namespace="storefront")),
@@ -18,7 +29,17 @@ urlpatterns = [
     path("storefront/", storefront_view, name="storefront_legacy"),
     path("redirect/", storefront_redirect, name="storefront_redirect"),
     
+    # Auth endpoints for login/logout
+    path("api/auth/", include("rest_framework.urls")),
+    path('accounts/login/', auth_views.LoginView.as_view(), name='login'),
+    path('accounts/logout/', auth_views.LogoutView.as_view(), name='logout'),
+    
+    # Django default admin interface
     path("admin/", admin.site.urls),
+    
+    # React admin panel at /rms-admin/
+    path("rms-admin/", AdminSPAView.as_view(), name="rms_admin_spa"),
+    re_path(r"^rms-admin/(?P<path>.*)$", AdminSPAView.as_view(), name="rms_admin_spa_catchall"),
     
     # API Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -46,8 +67,15 @@ urlpatterns = [
     path("api/", include(("orders.api_urls", "orders_api"), namespace="orders_api")),
     path("api/", include(("reports.urls", "reports"), namespace="reports")),
     path("api/", include(("reservations.urls", "reservations"), namespace="reservations")),
+    path("api/", include(("coupons.api_urls", "coupons_api"), namespace="coupons_api")),
+    path("api/", include(("loyalty.api_urls", "loyalty_api"), namespace="loyalty_api")),
+    # Backward-compat: both spellings available during transition
+    path("api/", include(("loyalty.urls", "loyalty"), namespace="loyalty")),
     path("api/", include(("loyality.urls", "loyality"), namespace="loyality")),
-    path("api/payments/", include(("payments.urls", "payments_api"), namespace="payments_api"))
+    path("api/payments/", include(("payments.urls", "payments_api"), namespace="payments_api")),
+
+    # Backward compatibility for older frontend expecting /core/api/*
+    path("core/api/", include(("core.api_urls_legacy", "core_api_legacy"), namespace="core_api_legacy")),
 ]
 
 if settings.DEBUG:

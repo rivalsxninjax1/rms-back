@@ -1,5 +1,5 @@
 from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver
+from django.dispatch import receiver, Signal
 from menu.models import MenuItem, Modifier
 from .cache_utils import invalidate_menu_item_cache, invalidate_modifier_cache
 
@@ -26,6 +26,11 @@ def invalidate_modifier_on_save(sender, instance, **kwargs):
     Invalidate modifier cache when a modifier is saved.
     """
     invalidate_modifier_cache(instance.id)
+
+# Public signal for order status changes.
+# Emitted by Order.transition_to(order, old, new, by_user)
+order_status_changed = Signal()
+
 
 
 @receiver(post_delete, sender=Modifier)

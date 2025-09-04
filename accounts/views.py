@@ -30,6 +30,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.authentication import SessionAuthentication
 
 from .serializers import (
     EmailOrUsernameTokenObtainPairSerializer,
@@ -44,7 +45,18 @@ User = get_user_model()
 
 
 # -----------------------------------------------------------------------------
-# Rate Limiting Classes
+# Authentication classes
+# -----------------------------------------------------------------------------
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    """SessionAuthentication that bypasses CSRF validation for API endpoints."""
+    
+    def enforce_csrf(self, request):
+        return  # Skip CSRF validation
+
+
+# -----------------------------------------------------------------------------
+# Rate limiting classes
 # -----------------------------------------------------------------------------
 
 class LoginRateThrottle(AnonRateThrottle):
@@ -92,6 +104,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
     Enhanced JWT token obtain view with rate limiting and security features.
     """
     serializer_class = EmailOrUsernameTokenObtainPairSerializer
+    authentication_classes = [CsrfExemptSessionAuthentication]
     throttle_classes = [LoginRateThrottle]
     
     def post(self, request, *args, **kwargs):
@@ -134,6 +147,7 @@ class CustomTokenRefreshView(TokenRefreshView):
     """
     Enhanced JWT token refresh view with additional security.
     """
+    authentication_classes = [CsrfExemptSessionAuthentication]
     
     def post(self, request, *args, **kwargs):
         try:
@@ -151,6 +165,7 @@ class RegisterView(APIView):
     User registration with enhanced validation and security.
     """
     permission_classes = [AllowAny]
+    authentication_classes = [CsrfExemptSessionAuthentication]
     throttle_classes = [RegisterRateThrottle]
     
     def post(self, request):
@@ -170,6 +185,7 @@ class UserProfileView(APIView):
     User profile management.
     """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
     throttle_classes = [UserRateThrottle]
     
     def get(self, request):
@@ -193,6 +209,7 @@ class ChangePasswordView(APIView):
     Change user password with proper validation.
     """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
     throttle_classes = [UserRateThrottle]
     
     def post(self, request):
@@ -214,6 +231,7 @@ class LogoutView(APIView):
     Logout view that blacklists the refresh token.
     """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
     
     def post(self, request):
         try:
@@ -241,6 +259,7 @@ class PasswordResetRequestView(APIView):
     Request password reset via email.
     """
     permission_classes = [AllowAny]
+    authentication_classes = [CsrfExemptSessionAuthentication]
     throttle_classes = [PasswordResetRateThrottle]
     
     def post(self, request):
@@ -261,6 +280,7 @@ class PasswordResetConfirmView(APIView):
     Confirm password reset with token.
     """
     permission_classes = [AllowAny]
+    authentication_classes = [CsrfExemptSessionAuthentication]
     throttle_classes = [PasswordResetRateThrottle]
     
     def post(self, request):

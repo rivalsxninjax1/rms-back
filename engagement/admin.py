@@ -37,7 +37,7 @@ try:
 except Exception:  # pragma: no cover
     LoyaltyTier = None  # type: ignore
     try:
-        from loyality.models import LoyaltyRank as _LoyaltyTier  # type: ignore
+        from loyalty.models import LoyaltyRank as _LoyaltyTier  # type: ignore
         LoyaltyTier = _LoyaltyTier
     except Exception:
         LoyaltyTier = None  # type: ignore

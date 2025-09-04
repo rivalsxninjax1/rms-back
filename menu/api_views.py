@@ -6,7 +6,7 @@ from django.http import Http404
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAuthenticatedOrReadOnly
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -32,7 +32,7 @@ class MenuCategoryViewSet(viewsets.ModelViewSet):
     """
     queryset = MenuCategory.objects.all().order_by('sort_order', 'name')
     serializer_class = MenuCategorySerializer
-    permission_classes = [AllowAny]  # Public read access
+    permission_classes = [IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['is_active']
@@ -49,6 +49,39 @@ class MenuCategoryViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_active=True)
         
         return queryset
+
+    def get_permissions(self):
+        if self.request.method in ("GET",):
+            return [AllowAny()]
+        # Writes require staff
+        if not (self.request.user and self.request.user.is_authenticated and self.request.user.is_staff):
+            self.permission_denied(self.request, message="Staff only")
+        return [IsAuthenticated()]
+
+    # Audit hooks
+    def perform_create(self, serializer):
+        obj = serializer.save()
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'CREATE', f'Category created: {obj}', content_object=obj, request=self.request, category='menu')
+        except Exception:
+            pass
+
+    def perform_update(self, serializer):
+        obj = serializer.save()
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'UPDATE', f'Category updated: {obj}', content_object=obj, request=self.request, category='menu')
+        except Exception:
+            pass
+
+    def perform_destroy(self, instance):
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'DELETE', f'Category deleted: {instance}', content_object=instance, request=self.request, category='menu')
+        except Exception:
+            pass
+        instance.delete()
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -111,7 +144,7 @@ class MenuItemViewSet(viewsets.ModelViewSet):
     queryset = MenuItem.objects.select_related('category').prefetch_related(
         'modifier_groups__modifiers'
     ).all().order_by('sort_order', 'name')
-    permission_classes = [AllowAny]  # Public read access
+    permission_classes = [IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = [
@@ -146,6 +179,13 @@ class MenuItemViewSet(viewsets.ModelViewSet):
                 pass
         
         return queryset
+
+    def get_permissions(self):
+        if self.request.method in ("GET",):
+            return [AllowAny()]
+        if not (self.request.user and self.request.user.is_authenticated and self.request.user.is_staff):
+            self.permission_denied(self.request, message="Staff only")
+        return [IsAuthenticated()]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -169,6 +209,90 @@ class MenuItemViewSet(viewsets.ModelViewSet):
         
         serializer = MenuItemListSerializer(items, many=True, context={'request': request})
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def export_csv(self, request):
+        if not (request.user and request.user.is_staff):
+            return Response({'detail': 'Forbidden'}, status=403)
+        qs = self.get_queryset()
+        import io, csv
+        sio = io.StringIO()
+        writer = csv.writer(sio)
+        header = ['id','name','category_id','price','is_available','available_from','available_until','is_vegetarian','is_vegan','is_gluten_free','sort_order']
+        writer.writerow(header)
+        for mi in qs:
+            writer.writerow([
+                mi.id, mi.name, getattr(mi.category, 'id', ''), str(mi.price), mi.is_available,
+                getattr(mi, 'available_from', '') or '', getattr(mi, 'available_until', '') or '',
+                getattr(mi, 'is_vegetarian', False), getattr(mi, 'is_vegan', False), getattr(mi, 'is_gluten_free', False), getattr(mi, 'sort_order', 0)
+            ])
+        from django.http import HttpResponse
+        resp = HttpResponse(sio.getvalue(), content_type='text/csv')
+        resp['Content-Disposition'] = 'attachment; filename="menu_items.csv"'
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(request.user, 'EXPORT', f'Exported {qs.count()} menu items to CSV', request=request, category='menu')
+        except Exception:
+            pass
+        return resp
+
+    @action(detail=False, methods=['post'])
+    def import_csv(self, request):
+        if not (request.user and request.user.is_staff):
+            return Response({'detail': 'Forbidden'}, status=403)
+        f = request.FILES.get('file')
+        if not f:
+            return Response({'detail': 'file is required'}, status=400)
+        import csv
+        from io import TextIOWrapper
+        wrapper = TextIOWrapper(f.file, encoding='utf-8')
+        reader = csv.DictReader(wrapper)
+        created = 0
+        updated = 0
+        for row in reader:
+            try:
+                cid = int(row.get('category_id') or 0)
+            except Exception:
+                cid = 0
+            defaults = {
+                'name': row.get('name') or '',
+                'price': row.get('price') or '0.00',
+                'is_available': (row.get('is_available') or 'True') in ('True','true','1'),
+                'available_from': row.get('available_from') or None,
+                'available_until': row.get('available_until') or None,
+                'is_vegetarian': (row.get('is_vegetarian') or 'False') in ('True','true','1'),
+                'is_vegan': (row.get('is_vegan') or 'False') in ('True','true','1'),
+                'is_gluten_free': (row.get('is_gluten_free') or 'False') in ('True','true','1'),
+                'sort_order': int(row.get('sort_order') or 0),
+            }
+            obj_id = row.get('id')
+            if obj_id:
+                try:
+                    mi = MenuItem.objects.get(pk=int(obj_id))
+                    for k, v in defaults.items():
+                        setattr(mi, k, v)
+                    if cid:
+                        mi.category_id = cid
+                    mi.save()
+                    updated += 1
+                except MenuItem.DoesNotExist:
+                    mi = MenuItem.objects.create(**defaults)
+                    if cid:
+                        mi.category_id = cid
+                        mi.save(update_fields=['category'])
+                    created += 1
+            else:
+                mi = MenuItem.objects.create(**defaults)
+                if cid:
+                    mi.category_id = cid
+                    mi.save(update_fields=['category'])
+                created += 1
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(request.user, 'IMPORT', f'Imported items CSV (created={created}, updated={updated})', request=request, category='menu')
+        except Exception:
+            pass
+        return Response({'created': created, 'updated': updated})
     
     @action(detail=False, methods=['get'])
     def search(self, request):
@@ -240,7 +364,7 @@ class ModifierGroupViewSet(viewsets.ModelViewSet):
     """
     queryset = ModifierGroup.objects.prefetch_related('modifiers').all().order_by('sort_order', 'name')
     serializer_class = ModifierGroupSerializer
-    permission_classes = [AllowAny]  # Public read access
+    permission_classes = [IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['is_required']
@@ -259,6 +383,37 @@ class ModifierGroupViewSet(viewsets.ModelViewSet):
         serializer = ModifierSerializer(modifiers, many=True, context={'request': request})
         return Response(serializer.data)
 
+    def get_permissions(self):
+        if self.request.method in ("GET",):
+            return [AllowAny()]
+        if not (self.request.user and self.request.user.is_authenticated and self.request.user.is_staff):
+            self.permission_denied(self.request, message="Staff only")
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        obj = serializer.save()
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'CREATE', f'Modifier group created: {obj}', content_object=obj, request=self.request, category='menu')
+        except Exception:
+            pass
+
+    def perform_update(self, serializer):
+        obj = serializer.save()
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'UPDATE', f'Modifier group updated: {obj}', content_object=obj, request=self.request, category='menu')
+        except Exception:
+            pass
+
+    def perform_destroy(self, instance):
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'DELETE', f'Modifier group deleted: {instance}', content_object=instance, request=self.request, category='menu')
+        except Exception:
+            pass
+        instance.delete()
+
 
 class ModifierViewSet(viewsets.ModelViewSet):
     """
@@ -266,7 +421,7 @@ class ModifierViewSet(viewsets.ModelViewSet):
     """
     queryset = Modifier.objects.all().order_by('sort_order', 'name')
     serializer_class = ModifierSerializer
-    permission_classes = [AllowAny]  # Public read access
+    permission_classes = [IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['is_available', 'modifier_group']
@@ -283,6 +438,37 @@ class ModifierViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_available=True)
         
         return queryset
+
+    def get_permissions(self):
+        if self.request.method in ("GET",):
+            return [AllowAny()]
+        if not (self.request.user and self.request.user.is_authenticated and self.request.user.is_staff):
+            self.permission_denied(self.request, message="Staff only")
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        obj = serializer.save()
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'CREATE', f'Modifier created: {obj}', content_object=obj, request=self.request, category='menu')
+        except Exception:
+            pass
+
+    def perform_update(self, serializer):
+        obj = serializer.save()
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'UPDATE', f'Modifier updated: {obj}', content_object=obj, request=self.request, category='menu')
+        except Exception:
+            pass
+
+    def perform_destroy(self, instance):
+        try:
+            from reports.models import AuditLog
+            AuditLog.log_action(self.request.user, 'DELETE', f'Modifier deleted: {instance}', content_object=instance, request=self.request, category='menu')
+        except Exception:
+            pass
+        instance.delete()
 
 
 class MenuDisplayViewSet(viewsets.ViewSet):

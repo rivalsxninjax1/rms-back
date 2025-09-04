@@ -1,0 +1,590 @@
+openapi: 3.1.0
+info:
+  title: RMS API (Unified Models)
+  version: 2.0.0
+  summary: Restaurant Management System API
+  description: |
+    Unified API for cart, orders, order items, and payments.
+    This revision consolidates duplicate models and standardizes endpoints.
+    Legacy loyalty endpoints remain under /api/loyality/ but are deprecated.
+  x-sunset-policy:
+    notice_period_days: 90
+    contact: security@yourdomain.example
+    policy_url: https://example.com/api-deprecation-policy
+servers:
+  - url: http://localhost:8000
+    description: Local development
+security:
+  - BearerAuth: []
+  - SessionAuth: []
+
+paths:
+  /api/carts/:
+    get:
+      tags: [Cart]
+      summary: Get current active cart
+      description: Returns the active cart for the authenticated user or current session.
+      responses:
+        '200':
+          description: Current cart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cart'
+              examples:
+                ok:
+                  value:
+                    cart_uuid: "a8d7e8f6-2d0e-4f2e-93e9-2b2f1d1a7c6d"
+                    status: "ACTIVE"
+                    delivery_option: "PICKUP"
+                    items: []
+                    subtotal: "0.00"
+                    total: "0.00"
+        '401': { $ref: '#/components/responses/NotAuthenticated' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /api/carts/add_item/:
+    post:
+      tags: [Cart]
+      summary: Add item to current cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddToCartRequest'
+            examples:
+              simple:
+                value: { menu_item_id: 123, quantity: 2 }
+      responses:
+        '201':
+          description: Item added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  cart: { $ref: '#/components/schemas/Cart' }
+                  added_item: { $ref: '#/components/schemas/CartItem' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/carts/update_item/:
+    patch:
+      tags: [Cart]
+      summary: Update cart item quantity or notes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCartItemRequest'
+      responses:
+        '200': { description: Updated cart, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/carts/remove_item/:
+    delete:
+      tags: [Cart]
+      summary: Remove an item from the cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cart_item_id]
+              properties:
+                cart_item_id: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Item removed, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/carts/clear/:
+    delete:
+      tags: [Cart]
+      summary: Clear all items from the cart
+      responses:
+        '200': { description: Cart cleared, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+
+  /api/carts/summary/:
+    get:
+      tags: [Cart]
+      summary: Get cart summary and totals
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cart_uuid: { type: string, format: uuid }
+                  item_count: { type: integer }
+                  total_quantity: { type: integer }
+                  subtotal: { type: string }
+                  tax_amount: { type: string }
+                  total_amount: { type: string }
+
+  /api/carts/merge/:
+    post:
+      tags: [Cart]
+      summary: Merge anonymous cart into user cart
+      security: [ { BearerAuth: [] }, { SessionAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [anonymous_cart_uuid]
+              properties:
+                anonymous_cart_uuid: { type: string, format: uuid }
+      responses:
+        '200': { description: Merged, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '401': { $ref: '#/components/responses/NotAuthenticated' }
+
+  /api/carts/modifiers/:
+    get:
+      tags: [Cart]
+      summary: List available modifiers for items
+      parameters:
+        - in: query
+          name: menu_item
+          schema: { type: integer, minimum: 1 }
+          description: Filter to a specific menu item id
+      responses:
+        '200':
+          description: Modifier groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  modifier_groups:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ModifierGroup'
+
+  /api/carts/apply_coupon/:
+    post:
+      tags: [Cart]
+      summary: Apply a coupon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [coupon_code]
+              properties:
+                coupon_code: { type: string }
+      responses:
+        '200': { description: Applied, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/carts/remove_coupon/:
+    post:
+      tags: [Cart]
+      summary: Remove applied coupon
+      responses:
+        '200': { description: Removed, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+
+  /api/carts/set_tip/:
+    post:
+      tags: [Cart]
+      summary: Set tip amount or percentage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tip_amount: { type: string, pattern: '^\n?\d+\.?\d*$' }
+                tip_percentage: { type: string, pattern: '^\n?\d+\.?\d*$' }
+              oneOf:
+                - required: [tip_amount]
+                - required: [tip_percentage]
+      responses:
+        '200': { description: Tip set, content: { application/json: { schema: { $ref: '#/components/schemas/Cart' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/carts/analytics/:
+    get:
+      tags: [Cart]
+      summary: Get analytics for current cart
+      responses:
+        '200': { description: Analytics payload, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+
+  /api/carts/validate_integrity/:
+    post:
+      tags: [Cart]
+      summary: Validate cart integrity
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { type: object, properties: { is_valid: { type: boolean }, message: { type: string } } } } } }
+
+  /api/orders/:
+    get:
+      tags: [Orders]
+      summary: List orders for current user/session
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - in: query
+          name: status
+          schema: { type: string }
+          description: Filter by order status
+        - in: query
+          name: delivery_option
+          schema: { type: string, enum: [PICKUP, DINE_IN, DELIVERY] }
+      responses:
+        '200':
+          description: Paged orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedOrderList'
+    post:
+      tags: [Orders]
+      summary: Create order from cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOrderRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  order: { $ref: '#/components/schemas/Order' }
+
+  /api/orders/{id}/:
+    get:
+      tags: [Orders]
+      summary: Retrieve order
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Order, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/orders/{id}/cancel/:
+    post:
+      tags: [Orders]
+      summary: Cancel order
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { reason: { type: string } } }
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/orders/{id}/refund/:
+    post:
+      tags: [Orders]
+      summary: Refund order
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [refund_amount], properties: { refund_amount: { type: string }, reason: { type: string } } }
+      responses:
+        '200': { description: Refunded, content: { application/json: { schema: { $ref: '#/components/schemas/Order' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/orders/{id}/track/:
+    get:
+      tags: [Orders]
+      summary: Track order
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Tracking info, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+
+  /api/orders/{id}/status_history/:
+    get:
+      tags: [Orders]
+      summary: Status history
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: History, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+
+  /api/orders/{id}/analytics/:
+    get:
+      tags: [Orders]
+      summary: Order analytics
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Analytics, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+
+  /api/order-items/:
+    get:
+      tags: [Order Items]
+      summary: List order items
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer }
+        - in: query
+          name: page_size
+          schema: { type: integer }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: order__status
+          schema: { type: string }
+      responses:
+        '200': { description: Items, content: { application/json: { schema: { $ref: '#/components/schemas/PaginatedOrderItemList' } } } }
+
+  /api/order-items/{id}/update_status/:
+    patch:
+      tags: [Order Items]
+      summary: Update item status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string }, notes: { type: string } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { type: object, properties: { message: { type: string }, item: { $ref: '#/components/schemas/OrderItem' } } } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+
+  /api/order-items/by_order/:
+    get:
+      tags: [Order Items]
+      summary: Items by order
+      parameters:
+        - in: query
+          name: order_id
+          required: true
+          schema: { type: integer }
+      responses:
+        '200': { description: Items, content: { application/json: { schema: { type: object, properties: { order_id: { type: integer }, items: { type: array, items: { $ref: '#/components/schemas/OrderItem' } } } } } } }
+
+  /api/order-items/preparation_queue/:
+    get:
+      tags: [Order Items]
+      summary: Preparation queue for kitchen
+      responses:
+        '200': { description: Queue, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+
+  /payments/webhook-legacy/:
+    post:
+      tags: [Payments]
+      summary: Legacy webhook endpoint (deprecated)
+      deprecated: true
+      description: Use /payments/webhook/ instead.
+      responses: { '200': { description: OK } }
+
+  /api/loyality/loyalty/preview/:
+    get:
+      tags: [Loyalty]
+      summary: Loyalty preview (deprecated)
+      deprecated: true
+      description: Use /api/loyalty/loyalty/preview/.
+      responses: { '200': { description: OK } }
+
+  /api/loyality/loyalty/ranks/:
+    get:
+      tags: [Loyalty]
+      summary: Loyalty ranks (deprecated)
+      deprecated: true
+      description: Use /api/loyalty/loyalty/ranks/.
+      responses: { '200': { description: OK } }
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    SessionAuth:
+      type: apiKey
+      in: cookie
+      name: rms_sessionid
+  responses:
+    ValidationError:
+      description: Request could not be validated
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              detail: { type: string }
+              errors: { type: object, additionalProperties: true }
+    NotAuthenticated:
+      description: Authentication required
+      content:
+        application/json:
+          schema: { type: object, properties: { detail: { type: string } } }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { type: object, properties: { detail: { type: string } } }
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema: { type: object, properties: { detail: { type: string } } }
+  schemas:
+    Cart:
+      type: object
+      properties:
+        cart_uuid: { type: string, format: uuid }
+        status: { type: string, enum: [ACTIVE, CONVERTED, ABANDONED, EXPIRED] }
+        delivery_option: { type: string, enum: [PICKUP, DINE_IN, DELIVERY] }
+        items: { type: array, items: { $ref: '#/components/schemas/CartItem' } }
+        subtotal: { type: string }
+        modifier_total: { type: string }
+        discount_amount: { type: string }
+        coupon_discount: { type: string }
+        loyalty_discount: { type: string }
+        tip_amount: { type: string }
+        delivery_fee: { type: string }
+        service_fee: { type: string }
+        tax_amount: { type: string }
+        tax_rate: { type: string }
+        total: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CartItem:
+      type: object
+      properties:
+        id: { type: integer }
+        menu_item: { $ref: '#/components/schemas/MenuItem' }
+        quantity: { type: integer }
+        unit_price: { type: string }
+        modifier_total: { type: string }
+        line_total: { type: string }
+    MenuItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        price: { type: string }
+        is_available: { type: boolean }
+    ModifierGroup:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        menu_item_id: { type: integer }
+        is_required: { type: boolean }
+        min_select: { type: integer }
+        max_select: { type: integer }
+        modifiers:
+          type: array
+          items:
+            type: object
+            properties: { id: { type: integer }, name: { type: string }, price: { type: string } }
+    Order:
+      type: object
+      properties:
+        id: { type: integer }
+        order_uuid: { type: string, format: uuid }
+        order_number: { type: string }
+        status: { type: string }
+        delivery_option: { type: string }
+        subtotal: { type: string }
+        tax_amount: { type: string }
+        total_amount: { type: string }
+        items: { type: array, items: { $ref: '#/components/schemas/OrderItem' } }
+        created_at: { type: string, format: date-time }
+    OrderItem:
+      type: object
+      properties:
+        id: { type: integer }
+        menu_item: { $ref: '#/components/schemas/MenuItem' }
+        quantity: { type: integer }
+        unit_price: { type: string }
+        modifier_total: { type: string }
+        line_total: { type: string }
+        status: { type: string }
+    PaginatedOrderList:
+      type: object
+      properties:
+        count: { type: integer }
+        next: { type: string, nullable: true }
+        previous: { type: string, nullable: true }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/Order' }
+    PaginatedOrderItemList:
+      type: object
+      properties:
+        count: { type: integer }
+        next: { type: string, nullable: true }
+        previous: { type: string, nullable: true }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+    AddToCartRequest:
+      type: object
+      required: [menu_item_id]
+      properties:
+        menu_item_id: { type: integer, minimum: 1 }
+        quantity: { type: integer, minimum: 1, default: 1 }
+        selected_modifiers:
+          type: array
+          items:
+            type: object
+            properties:
+              modifier_id: { type: integer }
+              quantity: { type: integer, default: 1 }
+        notes: { type: string }
+    UpdateCartItemRequest:
+      type: object
+      required: [cart_item_id, quantity]
+      properties:
+        cart_item_id: { type: integer, minimum: 1 }
+        quantity: { type: integer, minimum: 0 }
+        notes: { type: string }
+    CreateOrderRequest:
+      type: object
+      required: [cart_uuid]
+      properties:
+        cart_uuid: { type: string, format: uuid }
+        notes: { type: string }
+

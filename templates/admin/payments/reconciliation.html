@@ -1,0 +1,27 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block content %}
+<div class="container">
+  <h1>Payments Reconciliation</h1>
+  <form method="get" class="form-inline" style="margin-bottom:1rem;">
+    <label for="days">Range (days):</label>
+    <input type="number" min="1" id="days" name="days" value="{{ days }}" class="vTextField" style="width:6rem; margin:0 0.5rem;"/>
+    <button class="button" type="submit">Update</button>
+  </form>
+
+  <table class="grp-table" style="min-width: 500px;">
+    <thead>
+      <tr><th>Metric (last {{ days }} days)</th><th>Amount</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Stripe successful payments (sum)</td><td>${{ stripe_total|floatformat:2 }}</td></tr>
+      <tr><td>Cash payments (Billing.Payment completed)</td><td>${{ cash_total|floatformat:2 }}</td></tr>
+      <tr><td>Orders total (payment_status COMPLETED/REFUNDED)</td><td>${{ order_total|floatformat:2 }}</td></tr>
+    </tbody>
+  </table>
+
+  <p style="margin-top:1rem;">Note: This simple report sums local records. For authoritative Stripe totals, use the Stripe dashboard as well.</p>
+</div>
+{% endblock %}
+

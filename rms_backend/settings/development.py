@@ -65,6 +65,13 @@ LOGGING["loggers"]["accounts"]["handlers"] = ["console"]
 LOGGING["loggers"]["core.cache_service"]["handlers"] = ["console"]
 LOGGING["loggers"]["core.middleware.cache_middleware"]["handlers"] = ["console"]
 
+# Suppress per-request runserver logs in terminal while keeping functionality
+LOGGING["loggers"]["django.server"] = {
+    "handlers": ["console"],
+    "level": "WARNING",   # was INFO; set to WARNING to hide 200/304 lines
+    "propagate": False,
+}
+
 # Add development-specific loggers
 LOGGING["loggers"]["django.db.backends"] = {
     "handlers": ["console"],
@@ -97,7 +104,10 @@ DOORDASH_FEE = '0.00'
 # Static Files (Development)
 # -----------------------------------------------------------------------------
 # Include our static directory for development
-STATICFILES_DIRS = [BASE_DIR / "static"]
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+    BASE_DIR / "frontend" / "admin_spa",  # Include React build files
+]
 
 # Use regular static files storage in development
 STORAGES["staticfiles"] = {

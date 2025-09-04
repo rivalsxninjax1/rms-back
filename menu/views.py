@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import MenuCategory, MenuItem
+from core.permissions import user_in_group, ROLE_MANAGER, ROLE_CASHIER
 from .serializers import MenuItemSerializer
 
 # -----------------------------------------------------------------------------
@@ -52,13 +53,16 @@ class MenuItemViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["sort_order", "name"]
 
     def get_queryset(self):
-        qs = (
-            MenuItem.objects
-            .select_related("category", "organization")
-            .filter(is_available=True)
-            .order_by("sort_order", "name")
-        )
-        return qs
+        """
+        RBAC visibility rules:
+        - Anonymous/Host/Kitchen: only is_available=True items.
+        - Cashier/Manager: all items regardless of availability (POS/management).
+        """
+        qs = MenuItem.objects.select_related("category", "organization").all()
+        u = getattr(self.request, "user", None)
+        if not user_in_group(u, ROLE_MANAGER) and not user_in_group(u, ROLE_CASHIER):
+            qs = qs.filter(is_available=True)
+        return qs.order_by("sort_order", "name")
 
     def list(self, request: Request, *args, **kwargs) -> Response:
         qs = self.filter_queryset(self.get_queryset())
@@ -81,7 +85,14 @@ class MenuCategoryViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["sort_order", "name"]
 
     def get_queryset(self):
-        return MenuCategory.objects.filter(is_active=True).order_by("sort_order", "name")
+        """
+        Managers/Cashiers can see all categories; others only active ones.
+        """
+        u = getattr(self.request, "user", None)
+        qs = MenuCategory.objects.all()
+        if not user_in_group(u, ROLE_MANAGER) and not user_in_group(u, ROLE_CASHIER):
+            qs = qs.filter(is_active=True)
+        return qs.order_by("sort_order", "name")
 
 
 # -----------------------------------------------------------------------------

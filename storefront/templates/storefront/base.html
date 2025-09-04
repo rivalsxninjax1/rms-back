@@ -36,7 +36,6 @@
         <a href="#" onclick="return navReserve()">Reserve Table</a>
         {% if user.is_authenticated %}
           <a href="{% url 'storefront:my_orders' %}">My Orders</a>
-          <a href="{% url 'storefront:reservations_list' %}">My Reservations</a>
         {% endif %}
       </div>
       <div class="row" style="gap:8px">
@@ -101,6 +100,31 @@
   </div>
 
   <script>
+    // --- UI helpers: Toasts and busy states ---
+    function showToast(message, type){
+      try{
+        const wrap = document.getElementById('toastWrap');
+        if (!wrap) { alert(message); return; }
+        const div = document.createElement('div');
+        div.className = 'toast';
+        const colors = { success:'#166534', error:'#b91c1c', info:'#2563eb', warning:'#b45309' };
+        div.style.borderLeft = `4px solid ${colors[type]||colors.info}`;
+        div.textContent = String(message||'');
+        wrap.appendChild(div);
+        setTimeout(()=>{ try{ wrap.removeChild(div); }catch(_){} }, 4200);
+      }catch(_){ /* fallback */ alert(message); }
+    }
+    function setBusy(btn, busy, label){
+      if (!btn) return;
+      if (busy){
+        btn.dataset.prevText = btn.textContent || '';
+        btn.textContent = label || 'Working…';
+        btn.disabled = true;
+      } else {
+        if (btn.dataset.prevText !== undefined){ btn.textContent = btn.dataset.prevText; delete btn.dataset.prevText; }
+        btn.disabled = false;
+      }
+    }
     function refreshCart(){ document.body.dispatchEvent(new Event('cart:changed')); }
     // Generic AJAX form handler usable across pages
     async function handleCartForm(ev){
@@ -168,30 +192,36 @@
       return false;
     }
     function toggleAuthMode(){ const r=document.getElementById('registerForm'); return setAuthMode(r.style.display==='none'?'register':'login'); }
-    async function submitLogin(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), password:f.password.value }; if(!payload.username||!payload.password){return}
+    async function submitLogin(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), password:f.password.value }; if(!payload.username||!payload.password){ showToast('Please enter username and password','warning'); return }
+      const btn = f.querySelector('button[type="submit"]'); setBusy(btn,true,'Logging in…');
       try{
         const res = await fetch('{% url "accounts:login_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken(),'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin', body: JSON.stringify(payload)});
         let data = null; const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')){ data = await res.json().catch(()=>null); }
-        if(!res.ok){ alert(data && data.detail ? data.detail : 'Login failed'); return; }
+        if(!res.ok){ showToast((data && data.detail) ? data.detail : 'Login failed','error'); return; }
         // Merge guest cart into user cart then proceed
         await mergeCartAfterLogin();
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
+        showToast('Welcome back!','success');
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
         else if (window._postAuthAction === 'reserve'){ window._postAuthAction = null; window.location.href = '{% url "reservations_portal:page" %}'; }
-      } catch(e){ console.error(e); alert('Login failed'); }
+      } catch(e){ console.error(e); showToast('Login failed','error'); }
+      finally { setBusy(btn,false); }
       return false;
     }
-    async function submitRegister(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), email:(f.email?.value||'').trim(), password:f.password.value }; if(!payload.username||!payload.password){return}
+    async function submitRegister(ev){ ev.preventDefault(); const f=ev.target; const payload={ username:f.username.value.trim(), email:(f.email?.value||'').trim(), password:f.password.value }; if(!payload.username||!payload.password){ showToast('Please enter username and password','warning'); return }
+      const btn = f.querySelector('button[type="submit"]'); setBusy(btn,true,'Creating…');
       try{
         const res = await fetch('{% url "accounts:register_json" %}', {method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': csrfToken(),'X-Requested-With':'XMLHttpRequest'}, credentials:'same-origin', body: JSON.stringify(payload)});
         let data = null; const ct = res.headers.get('content-type')||''; if (ct.includes('application/json')){ data = await res.json().catch(()=>null); }
-        if(!res.ok){ alert(data && data.detail ? data.detail : 'Registration failed'); return; }
+        if(!res.ok){ showToast((data && data.detail) ? data.detail : 'Registration failed','error'); return; }
         // Merge guest cart into new user cart then proceed
         await mergeCartAfterLogin();
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
+        showToast('Account created!','success');
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
         else if (window._postAuthAction === 'reserve'){ window._postAuthAction = null; window.location.href = '{% url "reservations_portal:page" %}'; }
-      } catch(e){ console.error(e); alert('Registration failed'); }
+      } catch(e){ console.error(e); showToast('Registration failed','error'); }
+      finally { setBusy(btn,false); }
       return false;
     }
     async function logoutNow(){ try{ await fetch('{% url "accounts:logout_json" %}', {method:'POST', headers:{'X-CSRFToken': csrfToken()}}); location.reload(); }catch(e){ location.reload(); } }

@@ -17,6 +17,7 @@ from django.utils import timezone
 from django.db import transaction
 
 from billing.models import Payment
+from django.conf import settings as dj_settings
 from .models import StripePaymentIntent, StripeWebhookEvent, PaymentRefund
 from orders.models import Order, Cart
 from engagement.models import OrderExtras
@@ -129,24 +130,71 @@ def _build_line_items(order: Order, tip_amount: Decimal) -> List[Dict[str, Any]]
     return lines
 
 
+def _reservation_deposit_credit(order: Order) -> Tuple[Decimal, int | None]:
+    """
+    Look up a paid, unapplied reservation deposit for this user and return (amount, reservation_id).
+    We prefer the nearest upcoming reservation.
+    """
+    try:
+        user = getattr(order, 'user', None) or getattr(order, 'created_by', None)
+        if not user:
+            return Decimal('0.00'), None
+        try:
+            from reservations.models import Reservation as SimpleReservation
+        except Exception:
+            return Decimal('0.00'), None
+        now = timezone.now()
+        r = (
+            SimpleReservation.objects.filter(
+                created_by=user,
+                deposit_paid=True,
+                deposit_applied=False,
+                status__in=['pending', 'confirmed']
+            )
+            .order_by('start_time')
+            .first()
+        )
+        if not r:
+            return Decimal('0.00'), None
+        amt = Decimal(str(getattr(r, 'deposit_amount', 0) or 0)).quantize(Decimal('0.01'))
+        if amt <= 0:
+            return Decimal('0.00'), None
+        return amt, int(r.id)
+    except Exception:
+        logger.exception('Failed to compute reservation deposit credit for order %s', getattr(order, 'id', None))
+        return Decimal('0.00'), None
+
+
 def _apply_best_discount(order: Order, loyalty_amount: Decimal, coupon_amount: Decimal) -> Tuple[Dict[str, Any], Decimal, str]:
     """
     Create a one-off Stripe Coupon for amount_off = chosen discount (if any)
     and return (discounts_param, chosen_amount, source_label) for Checkout Session.
     """
     amount, source = choose_better_discount(loyalty_amount, coupon_amount)
+    # Add reservation deposit credit on top of chosen discount
+    dep_amount, dep_res_id = _reservation_deposit_credit(order)
+    amount = (amount or Decimal('0.00')) + (dep_amount or Decimal('0.00'))
     if amount <= 0:
         return {}, Decimal("0.00"), "none"
 
     # Create or reuse a short-lived coupon
     try:
+        name = f"{source.title()} discount" if amount > 0 else ""
         coupon = stripe.Coupon.create(
             amount_off=_money_cents(amount),
             currency=_currency(),
             duration="once",
-            name=f"{source.title()} discount",
+            name=name or "Discount",
         )
-        return {"discounts": [{"coupon": coupon["id"]}]}, amount, source
+        # Attach reservation id to metadata for webhook to mark applied
+        discounts_param = {"discounts": [{"coupon": coupon["id"]}]}
+        if dep_res_id:
+            # stash on order object so we can include in Session metadata below
+            try:
+                setattr(order, "_reservation_deposit_id", dep_res_id)
+            except Exception:
+                pass
+        return discounts_param, amount, source
     except Exception:
         logger.exception("Failed to create Stripe coupon; proceeding without discount")
         return {}, Decimal("0.00"), "none"
@@ -162,13 +210,13 @@ def checkout_session_from_order(order: Order):
     return create_checkout_session(order)
 
 
-def create_checkout_session(order: Order):
+def create_checkout_session(order: Order, *, success_url: str | None = None, cancel_url: str | None = None):
     """
     Builds a Stripe Checkout Session with items + tip + best discount (loyalty vs coupon).
     Stores resolved numbers as OrderExtras rows so invoices/receipts show correct lines.
     """
-    success_url = _success_url(order)
-    cancel_url = _cancel_url(order)
+    success_url = success_url or _success_url(order)
+    cancel_url = cancel_url or _cancel_url(order)
 
     # Resolve tip from PendingTip or existing extras
     user = getattr(order, "user", None) or getattr(order, "created_by", None)
@@ -195,11 +243,16 @@ def create_checkout_session(order: Order):
     line_items = _build_line_items(order, tip_amount)
 
     # Create the session
+    metadata = {"order_id": str(order.id)}
+    # If a reservation deposit is being credited, include id to mark as applied on webhook
+    dep_id = getattr(order, "_reservation_deposit_id", None)
+    if dep_id:
+        metadata["reservation_deposit_id"] = str(dep_id)
     session = stripe.checkout.Session.create(
         mode="payment",
         payment_method_types=["card"],
         line_items=line_items,
-        metadata={"order_id": str(order.id)},
+        metadata=metadata,
         client_reference_id=str(order.id),
         success_url=success_url,
         cancel_url=cancel_url,
@@ -538,18 +591,34 @@ def mark_paid(order: Order, stripe_event: Optional[dict[str, Any]] = None) -> No
 
 
 def mark_order_as_paid(order: Order) -> None:
-    """Mark an order as paid and update related models."""
-    order.paid_at = timezone.now()
-    order.save(update_fields=["paid_at"])
-    
+    """Mark an order as paid and update related models.
+
+    Creates/updates a Billing Payment with method='stripe', status='captured'.
+    """
+    # Update order payment_status if present
+    try:
+        if hasattr(order, 'payment_status'):
+            order.payment_status = 'COMPLETED'
+        order.save(update_fields=[f for f in ['payment_status'] if hasattr(order, f)])
+    except Exception:
+        pass
+
     # Create payment record in billing
-    Payment.objects.create(
-        order=order,
-        amount=order.total,
-        currency=order.currency or "USD",
-        status="completed",
-        reference=f"stripe_{order.stripe_payment_intent or 'manual'}"
-    )
+    try:
+        amt = getattr(order, 'total_amount', None) or getattr(order, 'total', None)
+        curr = getattr(settings, 'STRIPE_CURRENCY', 'usd').upper()
+        ext = getattr(order, 'stripe_payment_intent', '') or ''
+        Payment.objects.create(
+            order=order,
+            amount=amt or 0,
+            currency=curr,
+            method='stripe',
+            status='captured',
+            external_ref=ext or None,
+            notes='Stripe payment captured',
+        )
+    except Exception:
+        logger.exception("Failed to create Billing Payment for order %s", getattr(order, 'id', None))
 
 
 class StripePaymentService:
@@ -1026,6 +1095,35 @@ class StripePaymentService:
             mark_order_as_paid(order)
         except Exception:
             logger.exception("Failed to mark order %s as paid", order.id)
+
+        # Mark reservation deposit as applied if present
+        try:
+            dep_res_id = None
+            md = session.get('metadata') or {}
+            dep_res_id = md.get('reservation_deposit_id')
+            if dep_res_id:
+                try:
+                    from reservations.models import Reservation as SimpleReservation
+                    r = SimpleReservation.objects.filter(id=int(dep_res_id), deposit_paid=True, deposit_applied=False).first()
+                    if r:
+                        r.deposit_applied = True
+                        r.save(update_fields=["deposit_applied"])
+                        # Record source/metadata on the order for traceability
+                        try:
+                            if hasattr(order, 'source'):
+                                order.source = 'reservation'
+                            # attach reservation reference in metadata if available
+                            if hasattr(order, 'metadata'):
+                                m = dict(getattr(order, 'metadata') or {})
+                                m['reservation_deposit_id'] = int(dep_res_id)
+                                order.metadata = m
+                            order.save(update_fields=[f for f in ['source', 'metadata'] if hasattr(order, f)])
+                        except Exception:
+                            logger.exception("Failed to tag order %s as reservation-sourced", order.id)
+                except Exception:
+                    logger.exception("Failed to mark reservation %s deposit applied for order %s", dep_res_id, order.id)
+        except Exception:
+            logger.exception("Deposit apply hook failed for order %s", order.id)
 
         # Create short reservation(s) for dine-in if applicable
         try:

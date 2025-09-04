@@ -70,7 +70,7 @@ LOCAL_APPS = [
     "coupons",
     "payments",
     "reservations",
-    "loyality",
+    "loyalty.apps.LoyaltyConfig",
     "billing",
     "reports",
     "engagement",
@@ -79,12 +79,20 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
+# Keep migrations under the legacy module path for the historical app label
+MIGRATION_MODULES = globals().get("MIGRATION_MODULES", {}) or {}
+MIGRATION_MODULES.update({
+    # Point the historical app label to the canonical loyalty package migrations
+    "loyality": "loyalty.migrations",
+})
+
 # -----------------------------------------------------------------------------
 # Middleware
 # -----------------------------------------------------------------------------
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "core.middleware.request_id.RequestIDMiddleware",
     "core.rate_limiting.SecurityHeadersMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "core.middleware.cache_middleware.CachePerformanceMiddleware",
@@ -110,7 +118,10 @@ ROOT_URLCONF = "rms_backend.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],
+        "DIRS": [
+            BASE_DIR / "templates",
+            BASE_DIR / "frontend" / "rms_admin_spa",  # so index.html is found
+        ],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -125,6 +136,19 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "rms_backend.wsgi.application"
 ASGI_APPLICATION = "rms_backend.asgi.application"
+# Channels layer: prefer Redis if REDIS_URL set; fallback to in-memory (dev/tests)
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {"hosts": [REDIS_URL]},
+        }
+    }
+else:
+    CHANNEL_LAYERS = {
+        "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}
+    }
 
 # -----------------------------------------------------------------------------
 # Database Configuration
@@ -211,7 +235,10 @@ USE_TZ = True
 # -----------------------------------------------------------------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "static"]
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+    BASE_DIR / "frontend" / "rms_admin_spa",  # where React build is copied
+]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -273,14 +300,80 @@ REST_FRAMEWORK = {
     ],
 }
 
+# -----------------------------------------------------------------------------
+# Reservation Configuration (env-driven)
+# -----------------------------------------------------------------------------
+# Max simultaneous overlapping reservations a user can hold
+RESERVATION_MAX_TABLES = int(os.getenv("RESERVATION_MAX_TABLES", "1") or 1)
+# Minutes after start to mark as no-show/cancel if not checked in
+RESERVATION_AUTO_CANCEL_MINUTES = int(os.getenv("RESERVATION_AUTO_CANCEL_MINUTES", "20") or 20)
+# Deposit configuration
+# 1) Flat total deposit per reservation (takes precedence when > 0)
+RESERVATION_DEPOSIT_FLAT_TOTAL = os.getenv("RESERVATION_DEPOSIT_FLAT_TOTAL", "0").strip()
+try:
+    RESERVATION_DEPOSIT_FLAT_TOTAL = float(RESERVATION_DEPOSIT_FLAT_TOTAL or 0)
+except Exception:
+    RESERVATION_DEPOSIT_FLAT_TOTAL = 0.0
+# 2) Per-seat deposit (used only if flat total is 0)
+RESERVATION_DEPOSIT_PER_SEAT = os.getenv("RESERVATION_DEPOSIT_PER_SEAT", "0").strip()
+try:
+    RESERVATION_DEPOSIT_PER_SEAT = float(RESERVATION_DEPOSIT_PER_SEAT or 0)
+except Exception:
+    RESERVATION_DEPOSIT_PER_SEAT = 0.0
+# Max no-shows before action
+RESERVATION_MAX_NO_SHOWS = int(os.getenv("RESERVATION_MAX_NO_SHOWS", "3") or 3)
+# Action when limit reached: 'block' or 'require_prepayment'
+RESERVATION_NO_SHOW_ACTION = (os.getenv("RESERVATION_NO_SHOW_ACTION", "require_prepayment") or "require_prepayment").lower()
+
 # API Documentation
 SPECTACULAR_SETTINGS = {
-    "TITLE": "RMS API",
-    "DESCRIPTION": "Restaurant Management System API",
-    "VERSION": "1.0.0",
-    "SERVE_INCLUDE_SCHEMA": False,
+    "TITLE": "RMS API (Unified Models)",
+    "DESCRIPTION": (
+        "Restaurant Management System API.\n\n"
+        "This revision unifies duplicate models and standardizes cart/order endpoints.\n"
+        "Legacy loyalty endpoints remain available under /api/loyality/ but are deprecated."
+    ),
+    "VERSION": "2.0.0",
+    # Generate only for API routes
+    "SCHEMA_PATH_PREFIX": r"/api",
+    # Serve the generated schema & docs endpoints
+    "SERVE_INCLUDE_SCHEMA": True,
+    "SERVE_PUBLIC": True,
+    # Component behavior
     "COMPONENT_SPLIT_REQUEST": True,
     "SORT_OPERATIONS": False,
+    # Security: both session and bearer JWT are supported
+    "SECURITY": [
+        {"BearerAuth": []},
+        {"SessionAuth": []},
+    ],
+    # Add/override components (security schemes)
+    "APPEND_COMPONENTS": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": "JWT Authorization header using the Bearer scheme. Example: 'Authorization: Bearer <token>'",
+            },
+            "SessionAuth": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": globals().get("SESSION_COOKIE_NAME", "rms_sessionid"),
+                "description": "Session cookie authentication. Include CSRF header 'X-CSRFToken' for unsafe methods.",
+            },
+        }
+    },
+    # Post-processing hook to mark deprecated paths & add metadata
+    "POSTPROCESSING_HOOKS": [
+        "core.openapi_hooks.deprecate_paths_hook",
+    ],
+    # Swagger UI tweaks (when using spectacular views)
+    "SWAGGER_UI_SETTINGS": {
+        "deepLinking": True,
+        "displayRequestDuration": True,
+        "tryItOutEnabled": True,
+    },
 }
 
 # -----------------------------------------------------------------------------
@@ -419,6 +512,14 @@ DOORDASH_FEE = float(os.getenv("DOORDASH_FEE", "0"))
 TABLE_RESERVE_MINUTES = int(os.getenv("TABLE_RESERVE_MINUTES", "30"))
 
 # -----------------------------------------------------------------------------
+# Printing / Ticketing
+# -----------------------------------------------------------------------------
+# Enable writing kitchen ticket PDFs to MEDIA_ROOT/tickets when orders are paid
+PRINT_TICKETS = int(os.getenv("PRINT_TICKETS", "0") or 0)
+# Optional: printer name/queue identifier if/when direct printing is implemented
+PRINTER_NAME = os.getenv("PRINTER_NAME", "")
+
+# -----------------------------------------------------------------------------
 # Celery Configuration
 # -----------------------------------------------------------------------------
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://127.0.0.1:6379/0")
@@ -480,6 +581,14 @@ CELERY_TASK_ANNOTATIONS = {
         'rate_limit': '30/m',
         'max_retries': 3,
         'default_retry_delay': 45,
+    },
+}
+
+# Optional periodic tasks
+CELERY_BEAT_SCHEDULE = {
+    'auto_cancel_no_shows': {
+        'task': 'reservations.tasks_portal.auto_cancel_no_show_reservations',
+        'schedule': int(os.getenv('RESERVATION_AUTOCANCEL_CHECK_SECONDS', '60') or 60),
     },
 }
 
@@ -546,7 +655,7 @@ LOGGING = {
     "disable_existing_loggers": False,
     "formatters": {
         "verbose": {
-            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {message}",
+            "format": "{levelname} {asctime} {module} {process:d} {thread:d} {request_id} {message}",
             "style": "{",
         },
         "simple": {
@@ -555,7 +664,7 @@ LOGGING = {
         },
         "json": {
             "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
-            "format": "%(asctime)s %(name)s %(levelname)s %(message)s",
+            "format": "%(asctime)s %(name)s %(levelname)s %(request_id)s %(message)s %(pathname)s %(lineno)d",
         },
     },
     "filters": {
@@ -565,12 +674,16 @@ LOGGING = {
         "require_debug_true": {
             "()": "django.utils.log.RequireDebugTrue",
         },
+        "request_id": {
+            "()": "core.middleware.request_id.RequestIDFilter",
+        },
     },
     "handlers": {
         "console": {
             "level": "INFO",
             "class": "logging.StreamHandler",
             "formatter": "simple",
+            "filters": ["request_id"],
         },
         "file": {
             "level": "INFO",
@@ -579,6 +692,7 @@ LOGGING = {
             "maxBytes": 1024 * 1024 * 15,  # 15MB
             "backupCount": 10,
             "formatter": "verbose",
+            "filters": ["request_id"],
         },
         "error_file": {
             "level": "ERROR",
@@ -587,6 +701,7 @@ LOGGING = {
             "maxBytes": 1024 * 1024 * 15,  # 15MB
             "backupCount": 10,
             "formatter": "verbose",
+            "filters": ["request_id"],
         },
         "security_file": {
             "level": "INFO",
@@ -595,6 +710,7 @@ LOGGING = {
             "maxBytes": 1024 * 1024 * 15,  # 15MB
             "backupCount": 10,
             "formatter": "verbose",
+            "filters": ["request_id"],
         },
     },
     "root": {
@@ -649,7 +765,7 @@ LOGGING = {
 # Application-specific Settings
 # -----------------------------------------------------------------------------
 LOGIN_URL = "/accounts/login/"
-LOGIN_REDIRECT_URL = "/my-orders/"
+LOGIN_REDIRECT_URL = "/admin/"
 LOGOUT_REDIRECT_URL = "/"
 
 # Default primary key field type

@@ -15,6 +15,7 @@ class CreateReservationSerializer(serializers.Serializer):
     table_id = serializers.IntegerField()
     date = serializers.DateField()
     time = serializers.TimeField()
+    end_time = serializers.TimeField(required=False)
     party_size = serializers.IntegerField(min_value=1)
     customer_name = serializers.CharField(max_length=200)
     customer_phone = serializers.CharField(max_length=20)
@@ -40,18 +41,36 @@ class CreateReservationSerializer(serializers.Serializer):
         # Combine date + time; make aware in current timezone
         naive = datetime.combine(validated["date"], validated["time"]).replace(second=0, microsecond=0)
         start = timezone.make_aware(naive, timezone.get_current_timezone()) if timezone.is_naive(naive) else naive
-        end = start + timedelta(minutes=90)
-        res = Reservation.objects.create(
-            location=table.location,
-            table=table,
-            guest_name=validated["customer_name"],
-            guest_phone=validated["customer_phone"],
-            party_size=validated["party_size"],
-            start_time=start,
-            end_time=end,
-            note=validated.get("notes", ""),
-            created_by=user,
-        )
+        if validated.get("end_time"):
+            naive_end = datetime.combine(validated["date"], validated["end_time"]).replace(second=0, microsecond=0)
+            end = timezone.make_aware(naive_end, timezone.get_current_timezone()) if timezone.is_naive(naive_end) else naive_end
+            # Robustness: if end <= start, interpret as next-day end
+            if end <= start:
+                end = end + timedelta(days=1)
+        else:
+            end = start + timedelta(minutes=90)
+        # Sanity: bound maximum duration to 6 hours to avoid accidental 24h bookings
+        if (end - start).total_seconds() > 6 * 3600:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Reservation duration cannot exceed 6 hours.")
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        try:
+            res = Reservation.objects.create(
+                location=table.location,
+                table=table,
+                guest_name=validated["customer_name"],
+                guest_phone=validated["customer_phone"],
+                party_size=validated["party_size"],
+                start_time=start,
+                end_time=end,
+                note=validated.get("notes", ""),
+                created_by=user,
+            )
+        except DjangoValidationError as e:
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            # Normalize to DRF validation error for consistent 400 handling
+            payload = getattr(e, 'message_dict', None) or getattr(e, 'messages', None) or str(e)
+            raise DRFValidationError(payload)
         return res
 
 class ReservationSerializer(serializers.ModelSerializer):
@@ -60,6 +79,7 @@ class ReservationSerializer(serializers.ModelSerializer):
         fields = [
             "id", "location", "table", "guest_name", "guest_phone", "party_size",
             "start_time", "end_time", "reservation_date", "status", "note",
+            "deposit_amount", "deposit_paid", "deposit_applied",
             "created_by", "created_at",
         ]
-        read_only_fields = ["created_by", "created_at", "reservation_date"]
+        read_only_fields = ["created_by", "created_at", "reservation_date", "deposit_paid", "deposit_applied"]

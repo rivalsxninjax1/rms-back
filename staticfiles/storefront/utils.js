@@ -19,6 +19,16 @@
     if (parts.length === 2) return parts.pop().split(';').shift();
     return '';
   };
+
+  // Robust CSRF token getter: prefer hidden input (works with HttpOnly cookies)
+  window.csrfToken = window.csrfToken || function csrfToken() {
+    try {
+      const inp = document.querySelector('input[name="csrfmiddlewaretoken"]');
+      if (inp && inp.value) return inp.value;
+    } catch(_) { /* ignore */ }
+    const c = window.getCookie('csrftoken');
+    return c || '';
+  };
   
   // Money formatting utility
   window.money = window.money || function money(n) {
@@ -32,7 +42,7 @@
       headers: {
         'Content-Type': 'application/json',
         'X-Requested-With': 'XMLHttpRequest',
-        'X-CSRFToken': window.getCookie('csrftoken') || '',
+        'X-CSRFToken': window.csrfToken(),
       },
       credentials: 'include',
     };

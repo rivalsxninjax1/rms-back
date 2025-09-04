@@ -3,6 +3,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from .models import DailySales, ShiftReport, AuditLog
+from core.models import AuditLog as CoreAuditLog
 
 
 class DailySalesSerializer(serializers.ModelSerializer):
@@ -14,7 +15,14 @@ class DailySalesSerializer(serializers.ModelSerializer):
 class ShiftReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShiftReport
-        fields = ["id", "date", "shift", "staff", "orders_count", "total_cents", "created_at"]
+        fields = [
+            "id", "date", "shift", "staff",
+            "orders_count", "total_cents",
+            "opened_at", "closed_at",
+            "cash_open_cents", "cash_close_cents", "cash_sales_cents", "over_short_cents",
+            "notes",
+            "created_at"
+        ]
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -31,3 +39,16 @@ class AuditLogSerializer(serializers.ModelSerializer):
             'request_method', 'severity', 'category', 'metadata', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+
+
+class CoreAuditLogSerializer(serializers.ModelSerializer):
+    by_user_username = serializers.CharField(source='by_user.username', read_only=True)
+    by_user_email = serializers.CharField(source='by_user.email', read_only=True)
+    
+    class Meta:
+        model = CoreAuditLog
+        fields = [
+            'id', 'model_name', 'object_id', 'action', 'by_user', 
+            'by_user_username', 'by_user_email', 'at', 'diff'
+        ]
+        read_only_fields = ['id', 'at']

@@ -1,5 +1,6 @@
 from django.urls import path
 from .views_portal import reserve_page, AvailabilityView, CreateReservationView
+from .views_portal import deposit_success_view
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
@@ -18,6 +19,7 @@ urlpatterns = [
     path("", reserve_page, name="page"),
     path("api/availability/", AvailabilityView.as_view(), name="availability"),
     path("api/reservations/", CreateReservationView.as_view(), name="create"),
+    path("api/deposits/success/", deposit_success_view, name="deposit_success"),
 ]
 
 # Simple hold API – quick function view here for minimal risk
