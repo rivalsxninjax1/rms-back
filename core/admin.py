@@ -2,6 +2,16 @@ from django.contrib import admin
 from django.apps import apps
 from django.contrib.admin.sites import AlreadyRegistered
 from .models import Organization, Location, Table
+try:
+    # Legacy model that has been superseded by reservations.Reservation
+    from .models import Reservation as CoreReservation  # type: ignore
+except Exception:
+    CoreReservation = None
+try:
+    # Core AuditLog is deprecated in favor of reports.AuditLog — hide in Admin
+    from .models import AuditLog as CoreAuditLog  # type: ignore
+except Exception:
+    CoreAuditLog = None
 
 
 @admin.register(Table)
@@ -29,6 +39,10 @@ class TableAdmin(admin.ModelAdmin):
 
 # Register other models automatically
 for m in apps.get_app_config("core").get_models():
-    if m not in [Organization, Location, Table]:  # Skip already registered models
-        try: admin.site.register(m)
-        except AlreadyRegistered: pass
+    # Skip legacy core.Reservation and deprecated core.AuditLog in Admin
+    if m in [Organization, Location, Table] or (CoreReservation and m is CoreReservation) or (CoreAuditLog and m is CoreAuditLog):
+        continue
+    try:
+        admin.site.register(m)
+    except AlreadyRegistered:
+        pass

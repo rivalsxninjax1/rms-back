@@ -6,4 +6,8 @@ class ReportsConfig(AppConfig):
     
     def ready(self):
         """Import signals when the app is ready."""
-        import reports.signals
+        import reports.signals  # legacy audit hooks
+        try:
+            import reports.receivers  # live update broadcasts
+        except Exception:
+            pass

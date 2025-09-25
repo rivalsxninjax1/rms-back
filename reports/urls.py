@@ -9,7 +9,6 @@ from .views import (
     OrderAnalyticsViewSet,
     MenuAnalyticsViewSet,
     AuditLogViewSet,
-    CoreAuditLogViewSet
 )
 
 app_name = "reports"
@@ -17,7 +16,7 @@ app_name = "reports"
 router = DefaultRouter()
 router.register(r"reports/daily-sales", DailySalesViewSet, basename="daily-sales")
 router.register(r"reports/shifts", ShiftReportViewSet, basename="shift-report")
-router.register(r"reports/audit", CoreAuditLogViewSet, basename="core-audit")
+# Core audit logs deprecated; use reports audit logs endpoint below
 router.register(r"analytics/orders", OrderAnalyticsViewSet, basename="order-analytics")
 router.register(r"analytics/menu", MenuAnalyticsViewSet, basename="menu-analytics")
 router.register(r"audit-logs", AuditLogViewSet, basename="audit-logs")

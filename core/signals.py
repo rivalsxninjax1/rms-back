@@ -213,16 +213,32 @@ def set_current_user(user):
 
 def create_audit_log(model_name, object_id, action, diff_data, user=None):
     """
-    Create an audit log entry.
+    Create an audit log entry using the canonical reports.AuditLog model.
     """
     try:
-        from core.models import AuditLog
-        AuditLog.objects.create(
-            model_name=model_name,
-            object_id=str(object_id),
-            action=action,
-            by_user=user or get_current_user(),
-            diff=diff_data
+        from reports.models import AuditLog as ReportsAuditLog
+        # Map action to reports vocabulary
+        act = (action or '').strip().upper()
+        if act not in {c for c, _ in ReportsAuditLog.ACTION_CHOICES}:
+            # Fallback mapping
+            mapping = {'create': 'CREATE', 'update': 'UPDATE', 'delete': 'DELETE'}
+            act = mapping.get((action or '').lower(), 'SYSTEM')
+
+        # Prefer change details if present
+        changes = None
+        if isinstance(diff_data, dict):
+            changes = diff_data.get('changes') or diff_data
+
+        description = f"{act.title()} {model_name} {object_id}"
+        ReportsAuditLog.log_action(
+            user=user or get_current_user(),
+            action=act,
+            description=description,
+            content_object=None,  # avoid GFK lookups here to keep it light
+            changes=changes,
+            request=None,
+            severity='LOW',
+            category=model_name,
         )
     except Exception as e:
         logger.error(f'Failed to create audit log: {e}')

@@ -13,8 +13,7 @@ from rest_framework.response import Response
 from orders.models import Order, OrderItem
 from menu.models import MenuItem, MenuCategory
 from .models import DailySales, ShiftReport, AuditLog
-from .serializers import DailySalesSerializer, ShiftReportSerializer, AuditLogSerializer, CoreAuditLogSerializer
-from core.models import AuditLog as CoreAuditLog
+from .serializers import DailySalesSerializer, ShiftReportSerializer, AuditLogSerializer
 
 
 class DailySalesViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
@@ -496,56 +495,4 @@ class AuditLogViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets
         })
 
 
-class CoreAuditLogViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
-    """
-    Read-only API for core audit logs tracking Orders, Reservations, and Payments changes.
-    Admin-only access.
-    """
-    queryset = CoreAuditLog.objects.all().select_related('by_user').order_by('-at')
-    serializer_class = CoreAuditLogSerializer
-    permission_classes = [IsAdminUser]
-    filterset_fields = ['model_name', 'action', 'by_user']
-    search_fields = ['model_name', 'object_id', 'by_user__username']
-    ordering = ['-at']
-    
-    @action(detail=False, methods=['get'])
-    def summary(self, request):
-        """
-        Get audit log summary statistics for core models.
-        """
-        # Actions by model
-        actions_by_model = (
-            CoreAuditLog.objects
-            .values('model_name')
-            .annotate(count=Count('id'))
-            .order_by('-count')
-        )
-        
-        # Actions by type
-        actions_by_type = (
-            CoreAuditLog.objects
-            .values('action')
-            .annotate(count=Count('id'))
-            .order_by('-count')
-        )
-        
-        # Most active users
-        most_active_users = (
-            CoreAuditLog.objects
-            .values('by_user__username', 'by_user__email')
-            .annotate(action_count=Count('id'))
-            .order_by('-action_count')[:10]
-        )
-        
-        # Recent activity (last 24 hours)
-        twenty_four_hours_ago = timezone.now() - timedelta(hours=24)
-        recent_activity_count = CoreAuditLog.objects.filter(
-            at__gte=twenty_four_hours_ago
-        ).count()
-        
-        return Response({
-            'actions_by_model': list(actions_by_model),
-            'actions_by_type': list(actions_by_type),
-            'most_active_users': list(most_active_users),
-            'recent_activity_count': recent_activity_count
-        })
+## Core audit logs API removed. Use AuditLogViewSet.

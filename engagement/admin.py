@@ -89,7 +89,8 @@ if OrderExtras is not None:
         readonly_fields = ()
     _register_model_if_needed(OrderExtras, OrderExtrasAdmin)
 
-if TipLedger is not None:
+# Hide TipLedger from Admin per request (model remains for analytics)
+if False and TipLedger is not None:
     class TipLedgerAdmin(admin.ModelAdmin):
         list_display = ("id", "user", "order", "amount", "created_at")
         search_fields = ("user__username", "user__email", "order__id")
@@ -105,7 +106,8 @@ if ReservationHold is not None:
         readonly_fields = ()
     _register_model_if_needed(ReservationHold, ReservationHoldAdmin)
 
-if PendingTip is not None:
+# Hide PendingTip from Admin per request (model still usable internally)
+if False and PendingTip is not None:
     class PendingTipAdmin(admin.ModelAdmin):
         list_display = ("id", "user", "amount", "created_at")
         search_fields = ("user__username", "user__email")

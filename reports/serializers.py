@@ -3,7 +3,6 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from .models import DailySales, ShiftReport, AuditLog
-from core.models import AuditLog as CoreAuditLog
 
 
 class DailySalesSerializer(serializers.ModelSerializer):
@@ -41,14 +40,4 @@ class AuditLogSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
-class CoreAuditLogSerializer(serializers.ModelSerializer):
-    by_user_username = serializers.CharField(source='by_user.username', read_only=True)
-    by_user_email = serializers.CharField(source='by_user.email', read_only=True)
-    
-    class Meta:
-        model = CoreAuditLog
-        fields = [
-            'id', 'model_name', 'object_id', 'action', 'by_user', 
-            'by_user_username', 'by_user_email', 'at', 'diff'
-        ]
-        read_only_fields = ['id', 'at']
+# Core audit logs have been deprecated; use AuditLogSerializer above.
