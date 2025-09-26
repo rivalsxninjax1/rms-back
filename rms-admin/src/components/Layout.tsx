@@ -1,5 +1,6 @@
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../lib/auth'
+import { useProfile } from '../hooks/settings'
 import { ReactNode } from 'react'
 
 interface LayoutProps {
@@ -7,22 +8,32 @@ interface LayoutProps {
 }
 
 const nav = [
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/orders', label: 'Orders' },
-  { to: '/payments', label: 'Payments' },
-  { to: '/admin/reservations', label: 'Reservations' },
-  { to: '/admin/pos', label: 'POS' },
-  { to: '/menu', label: 'Menu' },
-  { to: '/coupons', label: 'Coupons' },
-  { to: '/loyalty', label: 'Loyalty' },
-  { to: '/reports', label: 'Reports' },
-  { to: '/settings', label: 'Settings' },
-  { to: '/users', label: 'Users' },
+  { to: '/dashboard', label: 'Dashboard', roles: ['Manager','Cashier','Kitchen','Host'] },
+  { to: '/orders', label: 'Orders', roles: ['Manager','Cashier','Kitchen','Host'] },
+  { to: '/payments', label: 'Payments', roles: ['Manager','Cashier'] },
+  { to: '/admin/reservations', label: 'Reservations', roles: ['Manager','Host'] },
+  // New LiveDashboard directly under Reservations
+  { to: '/admin/liveDashboard', label: 'LiveDashboard', roles: ['Manager','Cashier','Kitchen','Host'] },
+  { to: '/admin/pos', label: 'POS', roles: ['Manager','Cashier','Host'] },
+  { to: '/menu', label: 'Menu', roles: ['Manager'] },
+  { to: '/coupons', label: 'Coupons', roles: ['Manager'] },
+  { to: '/loyalty', label: 'Loyalty', roles: ['Manager','Cashier'] },
+  { to: '/reports', label: 'Reports', roles: ['Manager','Cashier','Kitchen','Host'] },
+  { to: '/settings', label: 'Settings', roles: ['Manager'] },
+  { to: '/users', label: 'Users', roles: ['Manager'] },
 ]
 
 export default function Layout({ children }: LayoutProps) {
 const clear = useAuthStore((s) => s.clear)
 const location = useLocation()
+const { data: profile } = useProfile()
+
+// Filter navigation items based on user roles
+const visibleNav = nav.filter(item => {
+  if (!item.roles || !profile?.roles) return true
+  return item.roles.some(role => profile.roles.includes(role))
+})
+
 return (
 <div className="min-h-screen grid grid-cols-[240px_1fr] grid-rows-[56px_1fr]">
 <header className="col-span-2 h-14 border-b flex items-center px-4 justify-between">
@@ -35,7 +46,7 @@ onClick={clear}
 
 <aside className="border-r p-3">
 <nav className="space-y-1">
-{nav.map((n) => {
+{visibleNav.map((n) => {
   const isActive = location.pathname === n.to || location.pathname.startsWith(n.to + '/')
   return (
 <NavLink

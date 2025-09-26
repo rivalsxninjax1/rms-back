@@ -11,9 +11,10 @@ from .models import Order, OrderItem
 def _send(event: dict) -> None:
     try:
         layer = get_channel_layer()
+        # Unify on the public "orders" channel used by core.Consumers
         async_to_sync(layer.group_send)(
-            "orders_console",
-            {"type": "order_event", "data": event},
+            "orders",
+            {"type": "broadcast", "data": event},
         )
     except Exception:
         # Swallow errors so signals don't break saves
@@ -44,4 +45,3 @@ def order_item_broadcast(sender, instance: OrderItem, created: bool, **kwargs):
         "item_id": instance.id,
     }
     _send(evt)
-

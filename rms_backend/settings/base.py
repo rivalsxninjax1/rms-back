@@ -75,6 +75,7 @@ LOCAL_APPS = [
     "reports",
     "engagement",
     "storefront",
+    "integrations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -504,6 +505,25 @@ UBEREATS_CLIENT_SECRET = os.getenv("UBEREATS_CLIENT_SECRET", "")
 UBEREATS_ACCESS_TOKEN = os.getenv("UBEREATS_ACCESS_TOKEN", "")
 UBEREATS_ENVIRONMENT = os.getenv("UBEREATS_ENVIRONMENT", "sandbox")
 
+# Uber Eats identifiers and webhook
+UBEREATS_MERCHANT_ID = os.getenv("UBEREATS_MERCHANT_ID", "")
+UBEREATS_STORE_ID = os.getenv("UBEREATS_STORE_ID", "")
+UBEREATS_WEBHOOK_SECRET = os.getenv("UBEREATS_WEBHOOK_SECRET", "")
+
+# DoorDash identifiers and webhook
+DOORDASH_DEVELOPER_ID = os.getenv("DOORDASH_DEVELOPER_ID", "")
+DOORDASH_KEY_ID = os.getenv("DOORDASH_KEY_ID", "")
+DOORDASH_SIGNING_SECRET = os.getenv("DOORDASH_SIGNING_SECRET", "")
+DOORDASH_MERCHANT_ID = os.getenv("DOORDASH_MERCHANT_ID", "")
+DOORDASH_STORE_ID = os.getenv("DOORDASH_STORE_ID", "")
+DOORDASH_WEBHOOK_SECRET = os.getenv("DOORDASH_WEBHOOK_SECRET", "")
+
+# Optional delivery defaults
+DELIVERY_SERVICE_ENABLED = int(os.getenv("DELIVERY_SERVICE_ENABLED", "0") or 0)
+DELIVERY_FEE_DOORDASH = float(os.getenv("DELIVERY_FEE_DOORDASH", "0") or 0)
+DELIVERY_FEE_UBEREATS = float(os.getenv("DELIVERY_FEE_UBEREATS", "0") or 0)
+MIN_ORDER_FOR_DELIVERY = float(os.getenv("MIN_ORDER_FOR_DELIVERY", "0") or 0)
+
 # Optional platform fees (absolute amounts added to service fees)
 UBEREATS_FEE = float(os.getenv("UBEREATS_FEE", "0"))
 DOORDASH_FEE = float(os.getenv("DOORDASH_FEE", "0"))
@@ -546,6 +566,42 @@ CELERY_TASK_ROUTES = {
     # Default queue for other tasks
     '*': {'queue': 'default'},
 }
+
+# -----------------------------------------------------------------------------
+# Delivery Middleware (Deliverect / Otter / Chowly / Itsacheckmate / Cuboh)
+# -----------------------------------------------------------------------------
+MIDDLEWARE_ENABLED = int(os.getenv("MIDDLEWARE_ENABLED", "0") or 0)
+MIDDLEWARE_PROVIDER = os.getenv("MIDDLEWARE_PROVIDER", "")
+
+# Deliverect
+DELIVERECT_API_BASE = os.getenv("DELIVERECT_API_BASE", "https://api.staging.deliverect.com")
+DELIVERECT_API_KEY = os.getenv("DELIVERECT_API_KEY", "")
+DELIVERECT_ACCOUNT_ID = os.getenv("DELIVERECT_ACCOUNT_ID", "")
+DELIVERECT_WEBHOOK_SECRET = os.getenv("DELIVERECT_WEBHOOK_SECRET", "")
+
+# Otter
+OTTER_API_BASE = os.getenv("OTTER_API_BASE", "https://api.tryotter.com")
+OTTER_API_KEY = os.getenv("OTTER_API_KEY", "")
+OTTER_ORG_ID = os.getenv("OTTER_ORG_ID", "")
+OTTER_WEBHOOK_SECRET = os.getenv("OTTER_WEBHOOK_SECRET", "")
+
+# Chowly
+CHOWLY_API_BASE = os.getenv("CHOWLY_API_BASE", "https://api.chowlyinc.com")
+CHOWLY_API_KEY = os.getenv("CHOWLY_API_KEY", "")
+CHOWLY_LOCATION_ID = os.getenv("CHOWLY_LOCATION_ID", "")
+CHOWLY_WEBHOOK_SECRET = os.getenv("CHOWLY_WEBHOOK_SECRET", "")
+
+# ItsaCheckmate
+CHECKMATE_API_BASE = os.getenv("CHECKMATE_API_BASE", "https://api.itsacheckmate.com")
+CHECKMATE_API_KEY = os.getenv("CHECKMATE_API_KEY", "")
+CHECKMATE_RESTAURANT_ID = os.getenv("CHECKMATE_RESTAURANT_ID", "")
+CHECKMATE_WEBHOOK_SECRET = os.getenv("CHECKMATE_WEBHOOK_SECRET", "")
+
+# Cuboh
+CUBOH_API_BASE = os.getenv("CUBOH_API_BASE", "https://api.cuboh.com")
+CUBOH_API_KEY = os.getenv("CUBOH_API_KEY", "")
+CUBOH_LOCATION_ID = os.getenv("CUBOH_LOCATION_ID", "")
+CUBOH_WEBHOOK_SECRET = os.getenv("CUBOH_WEBHOOK_SECRET", "")
 
 CELERY_TASK_DEFAULT_QUEUE = 'default'
 CELERY_TASK_CREATE_MISSING_QUEUES = True

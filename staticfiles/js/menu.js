@@ -146,7 +146,7 @@ class MenuManager {
 
         const itemsHTML = this.filteredItems.map(item => `
             <div class="menu-item fade-in" data-item-id="${item.id}">
-                <img src="${item.image || '/static/images/placeholder.svg'}" alt="${item.name}" class="menu-item-image" loading="lazy">
+                <img src="${item.image || '/static/images/placeholder.jpg'}" alt="${item.name}" class="menu-item-image" loading="lazy">
                 <div class="menu-item-content">
                     <h4 class="menu-item-title">${item.name}</h4>
                     <p class="menu-item-description">${item.description || 'Delicious menu item'}</p>
@@ -210,7 +210,7 @@ class MenuManager {
 
         if (itemTitle) itemTitle.textContent = item.name;
         if (itemImage) {
-            itemImage.src = item.image || '/static/images/placeholder.svg';
+            itemImage.src = item.image || '/static/images/placeholder.jpg';
             itemImage.alt = item.name;
         }
         if (itemDescription) itemDescription.textContent = item.description || 'Delicious menu item';

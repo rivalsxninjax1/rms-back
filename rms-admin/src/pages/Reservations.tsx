@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useLocations, useTableAvailability, useReservations as useResv, useReservationAction, useCreateReservation } from '../hooks/reservations'
 import api from '../lib/api'
+import LiveDashboard from './LiveDashboard'
 
 interface Location { id: number; name: string }
 interface TableAvail { id: number; table_number: string | number; capacity: number; is_free?: boolean; is_active?: boolean; busy?: Array<{start:string;end:string;reservation_id:number}>; free?: Array<{start:string;end:string}> }
@@ -200,6 +201,8 @@ export default function Reservations() {
           <div className="px-4 py-4 text-gray-500">No upcoming reservations.</div>
         )}
       </div>
+      {/* Live Dashboard directly below reservations */}
+      <LiveDashboard />
     </div>
   )
 }

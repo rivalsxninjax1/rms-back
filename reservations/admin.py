@@ -121,6 +121,7 @@ class ReservationAdmin(admin.ModelAdmin):
         urls = super().get_urls()
         custom = [
             path("floor-map/", self.admin_site.admin_view(self.floor_map_view), name="reservations_floor_map"),
+            path("live-dashboard/", self.admin_site.admin_view(self.live_dashboard_view), name="reservations_live_dashboard"),
         ]
         return custom + urls
 
@@ -172,3 +173,12 @@ class ReservationAdmin(admin.ModelAdmin):
             max_y=max(1, int(max_y) + 1),
         )
         return TemplateResponse(request, "admin/reservations/floor_map.html", ctx)
+
+    def live_dashboard_view(self, request):
+        """Minimal admin view that embeds the SPA Live Dashboard under /rms-admin/admin/liveDashboard."""
+        ctx = dict(
+            self.admin_site.each_context(request),
+            title="Live Dashboard",
+            spa_url="/rms-admin/admin/liveDashboard",
+        )
+        return TemplateResponse(request, "admin/reservations/live_dashboard.html", ctx)

@@ -1,4 +1,4 @@
-import { BrowserRouter, Switch, Route, Redirect } from 'react-router-dom'
+import { Switch, Route, Redirect } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import Layout from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -19,6 +19,7 @@ import Availability from './pages/menu/Availability'
 import POS from './pages/POS'
 import Coupons from './pages/Coupons'
 import Loyalty from './pages/Loyalty'
+import LiveDashboard from './pages/LiveDashboard'
 import SyncBar from './components/SyncBar'
 import { useEffect } from 'react'
 import { useSyncStore } from './lib/sync'
@@ -82,7 +83,6 @@ export default function App() {
   }, [setPending, setLastSync])
   return (
     <QueryClientProvider client={client}>
-      <BrowserRouter>
         <Switch>
           <Route path="/login" component={Login} />
           <ProtectedRoute>
@@ -92,6 +92,12 @@ export default function App() {
                   <Redirect to="/admin/dashboard" />
                 </Route>
                 <RBACRoute path="/admin/dashboard" roles={['Manager','Cashier','Kitchen','Host']} component={Dashboard} />
+                <Route exact path="/live">
+                  <Redirect to="/admin/liveDashboard" />
+                </Route>
+                <Route exact path="/admin/live">
+                  <Redirect to="/admin/liveDashboard" />
+                </Route>
                 <RBACRoute path="/admin/orders" roles={['Manager','Cashier','Kitchen','Host']} component={Orders} />
                 <RBACRoute path="/admin/payments" roles={['Manager','Cashier']} component={Payments} />
                 <RBACRoute path="/admin/reservations" roles={['Manager','Host']} component={Reservations} />
@@ -118,12 +124,12 @@ export default function App() {
                 <RBACRoute path="/admin/reports/audit-logs" roles={['Manager']} component={Reports} />
                 <RBACRoute path="/admin/settings" roles={['Manager']} component={Settings} />
                 <RBACRoute path="/admin/users" roles={['Manager']} component={Users} />
+                <RBACRoute path="/admin/liveDashboard" roles={['Manager','Cashier','Kitchen','Host']} component={LiveDashboard} />
               </Switch>
             </Layout>
             <SyncBar />
           </ProtectedRoute>
         </Switch>
-      </BrowserRouter>
     </QueryClientProvider>
   )
 }

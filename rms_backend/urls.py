@@ -7,18 +7,33 @@ from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
+from django.views.static import serve as static_serve
+import os
 from django.contrib.auth.decorators import login_required
 from django.utils.decorators import method_decorator
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
-from core.views import storefront_redirect, storefront_view, cart_view
+from core.views import (
+    storefront_redirect, storefront_view, cart_view,
+    favicon, apple_touch_icon, apple_touch_icon_precomposed,
+)
 
 class AdminSPAView(TemplateView):
-    template_name = "rms_admin_spa/index.html"
-    
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        return context
+    # Serve the new rms-admin dist if present; otherwise fall back to legacy template
+    template_name = "admin_spa/index.html"
+
+    def get(self, request, *args, **kwargs):
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dist_index = os.path.join(base_dir, 'rms-admin', 'dist', 'index.html')
+        if os.path.exists(dist_index):
+            from django.http import HttpResponse
+            with open(dist_index, 'rb') as f:
+                return HttpResponse(f.read(), content_type='text/html')
+        return super().get(request, *args, **kwargs)
 urlpatterns = [
+    # Favicon / Touch icons to prevent 404 noise
+    path("favicon.ico", favicon, name="favicon"),
+    path("apple-touch-icon.png", apple_touch_icon, name="apple_touch_icon"),
+    path("apple-touch-icon-precomposed.png", apple_touch_icon_precomposed, name="apple_touch_icon_precomposed"),
     # Django-rendered Storefront at root
     path("", include(("storefront.urls", "storefront"), namespace="storefront")),
     
@@ -29,10 +44,8 @@ urlpatterns = [
     path("storefront/", storefront_view, name="storefront_legacy"),
     path("redirect/", storefront_redirect, name="storefront_redirect"),
     
-    # Auth endpoints for login/logout
+    # Auth endpoints (DRF browsable login only); session JSON routes are under accounts/
     path("api/auth/", include("rest_framework.urls")),
-    path('accounts/login/', auth_views.LoginView.as_view(), name='login'),
-    path('accounts/logout/', auth_views.LogoutView.as_view(), name='logout'),
     
     # Django default admin interface
     path("admin/", admin.site.urls),
@@ -40,6 +53,13 @@ urlpatterns = [
     # React admin panel at /rms-admin/
     path("rms-admin/", AdminSPAView.as_view(), name="rms_admin_spa"),
     re_path(r"^rms-admin/(?P<path>.*)$", AdminSPAView.as_view(), name="rms_admin_spa_catchall"),
+    # Serve /rms-admin/assets/* from local dist in dev
+    re_path(
+        r"^rms-admin/assets/(?P<path>.*)$",
+        static_serve,
+        {"document_root": os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rms-admin', 'dist', 'assets')},
+        name="rms_admin_assets",
+    ),
     
     # API Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
@@ -73,6 +93,7 @@ urlpatterns = [
     path("api/", include(("loyalty.urls", "loyalty"), namespace="loyalty")),
     path("api/", include(("loyality.urls", "loyality"), namespace="loyality")),
     path("api/payments/", include(("payments.urls", "payments_api"), namespace="payments_api")),
+    path("api/integrations/", include(("integrations.urls", "integrations"), namespace="integrations")),
 
     # Backward compatibility for older frontend expecting /core/api/*
     path("core/api/", include(("core.api_urls_legacy", "core_api_legacy"), namespace="core_api_legacy")),

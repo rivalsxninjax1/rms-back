@@ -490,18 +490,23 @@ class OrderCreateSerializer(serializers.Serializer):
 
 class OrderListSerializer(serializers.ModelSerializer):
     """
-    Simplified serializer for order lists.
+    Enriched list serializer for orders used by admin dashboard live view.
+    Keeps payload moderate while exposing key fields for scanning.
     """
     user = serializers.StringRelatedField(read_only=True)
     item_count = serializers.SerializerMethodField()
+    table_number = serializers.CharField(source='table.table_number', read_only=True)
+    items = OrderItemSerializer(many=True, read_only=True)
     
     class Meta:
         model = Order
         fields = [
-            'order_uuid', 'order_number', 'user', 'status', 'delivery_option',
-            'total_amount', 'item_count', 'created_at'
+            'id', 'order_uuid', 'order_number', 'user', 'status', 'delivery_option', 'channel',
+            'total_amount', 'item_count', 'created_at',
+            'customer_name', 'customer_phone', 'customer_email', 'payment_status', 'table_number',
+            'notes', 'source', 'items'
         ]
-        read_only_fields = ['order_uuid', 'order_number', 'user', 'total_amount', 'created_at']
+        read_only_fields = ['id', 'order_uuid', 'order_number', 'user', 'total_amount', 'created_at']
     
     def get_item_count(self, obj):
         """Get total number of items in order."""

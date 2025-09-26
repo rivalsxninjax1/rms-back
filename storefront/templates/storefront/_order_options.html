@@ -21,6 +21,18 @@
     {% endwith %}
   </div>
 
+  <div class="row" style="gap:8px;margin-top:8px;flex-wrap:wrap">
+    <span class="muted">Prefer marketplace checkout?</span>
+    <a class="btn" href="{% url 'storefront:order_on_ubereats' %}">Open on UberEats</a>
+    <a class="btn" href="{% url 'storefront:order_on_doordash' %}">Open on DoorDash</a>
+  </div>
+
+  {% if sel == 'DELIVERY' and cart.metadata.provider %}
+    <div class="muted" style="margin-top:6px">
+      Selected provider: <strong>{{ cart.metadata.provider|title }}</strong>. The Pay button will open the provider's checkout.
+    </div>
+  {% endif %}
+
   {% if cart.delivery_option == 'DINE_IN' and sel_table_ids %}
     <div class="muted">Selected tables:
       {% for t in tables %}

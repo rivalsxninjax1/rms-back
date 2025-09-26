@@ -136,6 +136,20 @@ def cart_full(request: HttpRequest) -> HttpResponse:
         reserved_ids = set()
     return render(request, "storefront/cart_full.html", {"cart": cart, "tables": tables, "sel_table_ids": sel_ids, "reserved_ids": reserved_ids})
 
+@require_GET
+def order_on_ubereats(request: HttpRequest) -> HttpResponse:
+    url = getattr(settings, "UBEREATS_ORDER_URL", "")
+    if not url:
+        return HttpResponseBadRequest("UberEats order URL not configured.")
+    return HttpResponseRedirect(url)
+
+@require_GET
+def order_on_doordash(request: HttpRequest) -> HttpResponse:
+    url = getattr(settings, "DOORDASH_ORDER_URL", "")
+    if not url:
+        return HttpResponseBadRequest("DoorDash order URL not configured.")
+    return HttpResponseRedirect(url)
+
 @require_POST
 @transaction.atomic
 def cart_add(request: HttpRequest) -> HttpResponse:
@@ -374,6 +388,17 @@ def cart_checkout(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"ok": False, "error": "Please select a table for dine-in."}, status=400)
     if not getattr(request, "user", None) or not request.user.is_authenticated:
         return JsonResponse({"ok": False, "auth_required": True}, status=401)
+
+    # If customer selected a marketplace provider, redirect to its URL
+    try:
+        provider = None
+        if isinstance(cart.metadata, dict):
+            provider = (cart.metadata.get("provider") or "").upper() or None
+        if cart.delivery_option == Cart.DELIVERY_DELIVERY and provider in {"UBEREATS", "DOORDASH"}:
+            target = reverse('storefront:order_on_ubereats') if provider == "UBEREATS" else reverse('storefront:order_on_doordash')
+            return JsonResponse({"ok": True, "redirect_url": target})
+    except Exception:
+        pass
 
     cart.calculate_totals(); cart.save()
     order = Order.create_from_cart(cart)

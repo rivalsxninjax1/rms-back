@@ -30,15 +30,15 @@
 </head>
 <body>
   <header>
-    <div class="container row" style="justify-content:space-between">
-      <div class="row" style="gap:12px">
+    <div class="container row" style="justify-content:space-between" id="hdrRoot" data-my-orders-url="{% url 'storefront:my_orders' %}">
+      <div class="row" id="hdrLeft" style="gap:12px">
         <a href="{% url 'storefront:menu_list' %}">🍽️ Storefront</a>
         <a href="#" onclick="return navReserve()">Reserve Table</a>
         {% if user.is_authenticated %}
           <a href="{% url 'storefront:my_orders' %}">My Orders</a>
         {% endif %}
       </div>
-      <div class="row" style="gap:8px">
+      <div class="row" id="hdrRight" style="gap:8px">
         {% if user.is_authenticated %}
           <span class="muted">Hi, {{ user.get_username }}</span>
           <button class="btn" type="button" onclick="logoutNow()">Logout</button>
@@ -201,6 +201,7 @@
         // Merge guest cart into user cart then proceed
         await mergeCartAfterLogin();
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
+        try { if (data && data.user && data.user.username) applyLoggedInUI(data.user.username); } catch {}
         showToast('Welcome back!','success');
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
         else if (window._postAuthAction === 'reserve'){ window._postAuthAction = null; window.location.href = '{% url "reservations_portal:page" %}'; }
@@ -217,6 +218,7 @@
         // Merge guest cart into new user cart then proceed
         await mergeCartAfterLogin();
         closeAuthModal(); refreshCartBar(); document.body.dispatchEvent(new Event('auth:loggedin'));
+        try { if (data && data.user && data.user.username) applyLoggedInUI(data.user.username); } catch {}
         showToast('Account created!','success');
         if (window._postAuthAction === 'checkout' && typeof beginCheckout === 'function'){ window._postAuthAction = null; beginCheckout(); }
         else if (window._postAuthAction === 'reserve'){ window._postAuthAction = null; window.location.href = '{% url "reservations_portal:page" %}'; }
@@ -242,6 +244,46 @@
     }
     document.addEventListener('DOMContentLoaded', refreshCartBar);
     document.body.addEventListener('cart:changed', refreshCartBar);
+
+    // Swap header UI to authenticated state without full reload
+    function applyLoggedInUI(username){
+      try{
+        const root = document.getElementById('hdrRoot');
+        const left = document.getElementById('hdrLeft');
+        const right = document.getElementById('hdrRight');
+        if (!root || !left || !right) return;
+        // Add "My Orders" link if missing
+        const myOrdersHref = root.getAttribute('data-my-orders-url') || '#';
+        if (!left.querySelector('a[data-dyn="my-orders"]')){
+          const a = document.createElement('a');
+          a.href = myOrdersHref;
+          a.textContent = 'My Orders';
+          a.setAttribute('data-dyn','my-orders');
+          left.appendChild(a);
+        }
+        // Replace login button with greeting + logout
+        const loginBtn = document.getElementById('loginBtn');
+        if (loginBtn) loginBtn.remove();
+        if (!right.querySelector('[data-dyn="greet"]')){
+          const span = document.createElement('span');
+          span.className = 'muted';
+          span.setAttribute('data-dyn','greet');
+          span.textContent = 'Hi, ' + (username || 'there');
+          right.insertBefore(span, right.firstChild);
+        }
+        if (!right.querySelector('button[data-dyn="logout"]')){
+          const btn = document.createElement('button');
+          btn.className = 'btn';
+          btn.type = 'button';
+          btn.setAttribute('data-dyn','logout');
+          btn.textContent = 'Logout';
+          btn.onclick = logoutNow;
+          // Insert before cart button (which is an <a> View Cart)
+          const cartLink = Array.from(right.querySelectorAll('a')).find(a=>/cart_full/.test(a.getAttribute('href')||''));
+          right.insertBefore(btn, cartLink || null);
+        }
+      }catch(e){ /* no-op */ }
+    }
 
     // Merge helper: asks server to merge session cart into user cart post-auth
     async function mergeCartAfterLogin(){

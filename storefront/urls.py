@@ -24,4 +24,7 @@ urlpatterns = [
     path("cart/clear/", views.cart_clear, name="cart_clear"),
     path("my-orders/", views.my_orders, name="my_orders"),
     path("reservations/", views.reservations_list, name="reservations_list"),
+    # External marketplace redirects for maps/fees
+    path("order-on/ubereats/", views.order_on_ubereats, name="order_on_ubereats"),
+    path("order-on/doordash/", views.order_on_doordash, name="order_on_doordash"),
 ]

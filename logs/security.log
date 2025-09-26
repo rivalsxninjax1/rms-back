@@ -37,3 +37,15 @@ WARNING 2025-09-04 13:39:13,110 log 92526 6177304576 5906fa19-053f-4095-9a80-937
 WARNING 2025-09-04 13:39:23,386 log 92526 6177304576 1f8a2dfc-0721-4117-b9fb-6ce8a75b3ad7 Forbidden (CSRF token missing.): /admin/undefined/api/auth/token/
 WARNING 2025-09-04 13:42:05,695 log 92526 6160478208 2d8a6641-8284-42f0-b5db-31906d4a14a7 Forbidden (CSRF token missing.): /admin/undefined/api/auth/token/
 WARNING 2025-09-04 13:42:12,283 log 92526 6210957312 0e97afb7-57e3-4d6b-9811-ed25fe4b617b Forbidden (CSRF token missing.): /admin/undefined/api/auth/token/
+WARNING 2025-09-25 15:01:18,961 log 16882 6215315456 32b5b56e-5c4d-40e3-b6e7-29def5539a59 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /accounts/login/
+WARNING 2025-09-25 15:01:29,628 log 16882 6215315456 4aa49f89-393d-4263-a563-e666a77575d1 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /accounts/register/
+WARNING 2025-09-25 15:01:31,160 log 16882 6215315456 c714e6ad-4ca9-49da-b7d3-58fd1dd3e640 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /accounts/register/
+WARNING 2025-09-25 15:05:25,850 log 17089 6200553472 d1620149-7aeb-432d-b1f0-6adaaf2e8285 Forbidden (CSRF token from the 'X-Csrftoken' HTTP header incorrect.): /accounts/login/
+WARNING 2025-09-25 17:22:30,707 log 17947 6186823680 48794360-0ca3-4551-bdb5-9da3596a4e97 Forbidden (CSRF token from POST incorrect.): /cart/add/
+WARNING 2025-09-25 17:22:31,716 log 17947 6186823680 f7aca66f-cf9b-4bb2-9e33-8b4e8d964e0f Forbidden (CSRF token from POST incorrect.): /cart/add/
+WARNING 2025-09-25 17:22:33,674 log 17947 6186823680 f331e56b-b59b-48bf-9c28-a3f2c10b19e3 Forbidden (CSRF token from POST incorrect.): /cart/add/
+WARNING 2025-09-25 17:22:33,958 log 17947 6186823680 ee39301b-7c80-4bb1-863d-261a750e4cf6 Forbidden (CSRF token from POST incorrect.): /cart/add/
+WARNING 2025-09-25 17:22:35,710 log 17947 6186823680 a476391a-73db-4c14-a9fe-ce2cd9d34add Forbidden (CSRF token from POST incorrect.): /cart/add/
+WARNING 2025-09-25 17:22:36,604 log 17947 6186823680 cbf42409-25e8-4cdf-9230-3c3ccd462064 Forbidden (CSRF token from POST incorrect.): /cart/add/
+WARNING 2025-09-26 08:16:21,087 log 1527 6163181568 7afa0f5b-064e-4813-8b2f-d7edb1424799 Forbidden (CSRF token from POST incorrect.): /cart/add/
+WARNING 2025-09-26 08:16:23,848 log 1527 6163181568 bb3a9079-5740-4581-8893-b1726d6d1546 Forbidden (CSRF token from POST incorrect.): /cart/add/

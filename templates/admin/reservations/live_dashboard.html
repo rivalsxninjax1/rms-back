@@ -1,0 +1,17 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block content %}
+  <h1 style="margin-bottom: 1rem;">{% trans "Live Dashboard" %}</h1>
+  <p class="help">This embeds the React Live Dashboard below. For best experience, open it in a new tab.</p>
+  <p style="margin: 0 0 1rem;">
+    <a class="button" href="{{ spa_url }}" target="_blank" rel="noopener">{% trans "Open Fullscreen" %}</a>
+  </p>
+  <div style="border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden;">
+    <iframe src="{{ spa_url }}"
+            title="Live Dashboard"
+            style="width:100%; height: 80vh; border:0; background: #fff;"
+            referrerpolicy="no-referrer-when-downgrade"></iframe>
+  </div>
+{% endblock %}
+

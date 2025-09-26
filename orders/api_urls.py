@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from django.urls import path, include
+from . import views
 from rest_framework.routers import DefaultRouter
 
 from .api_views import CartViewSet, OrderViewSet, OrderItemViewSet
@@ -14,6 +15,9 @@ router.register(r'order-items', OrderItemViewSet, basename='orderitem')
 
 urlpatterns = [
     path("", include(router.urls)),
+    # Third-party delivery webhooks (Uber Eats / DoorDash)
+    path('webhooks/ubereats/', views.ubereats_webhook, name='ubereats_webhook'),
+    path('webhooks/doordash/', views.doordash_webhook, name='doordash_webhook'),
 ]
 
 # The router automatically creates the following endpoints:
@@ -60,4 +64,3 @@ urlpatterns = [
 # PATCH  /api/order-items/{id}/update_status/ - Update order item status
 # GET    /api/order-items/order/{order_id}/ - Get all items for specific order
 # GET    /api/order-items/preparation_queue/ - Get items in preparation queue (kitchen)
-

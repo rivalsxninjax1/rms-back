@@ -95,11 +95,19 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     """Serializer for user profile information."""
+    roles = serializers.SerializerMethodField()
     
     class Meta:
         model = User
-        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'date_joined', 'last_login')
-        read_only_fields = ('id', 'username', 'date_joined', 'last_login')
+        fields = ('id', 'username', 'email', 'first_name', 'last_name', 'date_joined', 'last_login', 'roles')
+        read_only_fields = ('id', 'username', 'date_joined', 'last_login', 'roles')
+    
+    def get_roles(self, obj):
+        """Return list of user's group names as roles."""
+        try:
+            return list(obj.groups.values_list('name', flat=True))
+        except Exception:
+            return []
     
     def validate_email(self, value):
         if value:

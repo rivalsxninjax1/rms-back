@@ -12,7 +12,7 @@ from django.http import HttpRequest, JsonResponse
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.views import View
-from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.csrf import csrf_protect, csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from django.conf import settings
 from django.core.cache import cache
@@ -173,6 +173,11 @@ class RegisterView(APIView):
         if serializer.is_valid():
             with transaction.atomic():
                 user = serializer.save()
+                # Also create a session login for immediate use
+                try:
+                    login(request, user)
+                except Exception:
+                    pass
                 return Response(
                     serializer.to_representation(user),
                     status=status.HTTP_201_CREATED
@@ -299,7 +304,7 @@ class PasswordResetConfirmView(APIView):
 # Session Auth JSON endpoints (kept for backward compatibility)
 # -----------------------------------------------------------------------------
 
-@method_decorator(csrf_protect, name="dispatch")
+@method_decorator(csrf_exempt, name="dispatch")
 class SessionLoginJSON(View):
     """
     POST { "username": "...", "password": "..." }
@@ -324,7 +329,7 @@ class SessionLoginJSON(View):
         return JsonResponse({"ok": True, "user": {"id": user.id, "username": user.get_username()}, "csrf": get_token(request)})
 
 
-@method_decorator(csrf_protect, name="dispatch")
+@method_decorator(csrf_exempt, name="dispatch")
 class RegisterJSON(View):
     """
     POST { "username": "...", "password": "...", "email": "optional" }

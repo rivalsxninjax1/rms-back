@@ -14,8 +14,12 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import action
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_http_methods
+import json as _json
+import hmac as _hmac
+import hashlib as _hashlib
+import logging as _logging
 
 from .models import Order, OrderItem
 from menu.models import MenuItem
@@ -985,3 +989,79 @@ def cart_expiration_view(request):
         })
     except Exception as e:
         return JsonResponse({"error": str(e), "expired": False, "has_items": False}, status=500)
+
+
+# ----------------------------
+# Delivery provider webhooks
+# ----------------------------
+
+def _verify_hmac_signature(secret: str, header_signature: str, payload: bytes) -> bool:
+    try:
+        digest = _hmac.new((secret or "").encode("utf-8"), payload, _hashlib.sha256).hexdigest()
+        # header_signature may be raw hex or prefixed; be tolerant
+        sig = (header_signature or "").strip()
+        if sig.startswith("sha256="):
+            sig = sig.split("=", 1)[1]
+        return _hmac.compare_digest(digest, sig)
+    except Exception:
+        return False
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def ubereats_webhook(request):
+    """Webhook endpoint for Uber Eats events.
+    Uses optional HMAC verification if UBEREATS_WEBHOOK_SECRET is set.
+    """
+    raw = request.body or b""
+    try:
+        event = _json.loads(raw.decode("utf-8"))
+    except Exception:
+        return HttpResponse("Invalid JSON", status=400)
+
+    secret = getattr(settings, "UBEREATS_WEBHOOK_SECRET", "")
+    ok = True
+    if secret:
+        sig_hdr = request.META.get("HTTP_X_UBER_SIGNATURE", "") or request.META.get("HTTP_X_UBEREATS_SIGNATURE", "")
+        ok = _verify_hmac_signature(secret, sig_hdr, raw)
+    if not ok:
+        return HttpResponse("Invalid signature", status=400)
+
+    try:
+        from .services.uber_eats import UberEatsService
+        svc = UberEatsService()
+        svc.webhook_handler(event)
+    except Exception as e:
+        _logging.getLogger(__name__).exception("UberEats webhook processing failed: %s", e)
+        return HttpResponse("Failed", status=500)
+    return HttpResponse("OK", status=200)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def doordash_webhook(request):
+    """Webhook endpoint for DoorDash Drive events.
+    Uses optional HMAC verification if DOORDASH_WEBHOOK_SECRET or DOORDASH_SIGNING_SECRET is set.
+    """
+    raw = request.body or b""
+    try:
+        event = _json.loads(raw.decode("utf-8"))
+    except Exception:
+        return HttpResponse("Invalid JSON", status=400)
+
+    secret = getattr(settings, "DOORDASH_WEBHOOK_SECRET", "") or getattr(settings, "DOORDASH_SIGNING_SECRET", "")
+    ok = True
+    if secret:
+        sig_hdr = request.META.get("HTTP_X_DOORDASH_SIGNATURE", "") or request.META.get("HTTP_X_DD_SIGNATURE", "")
+        ok = _verify_hmac_signature(secret, sig_hdr, raw)
+    if not ok:
+        return HttpResponse("Invalid signature", status=400)
+
+    try:
+        from .services.doordash import DoorDashService
+        svc = DoorDashService()
+        svc.webhook_handler(event)
+    except Exception as e:
+        _logging.getLogger(__name__).exception("DoorDash webhook processing failed: %s", e)
+        return HttpResponse("Failed", status=500)
+    return HttpResponse("OK", status=200)

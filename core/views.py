@@ -30,6 +30,27 @@ def cart_view(request):
     return render(request, 'cart.html')
 
 
+# ---- Favicon and Apple Touch Icons (prevent 404s) ----
+_PNG_DOT = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+    b"\x00\x00\x00\x0cIDAT\x08\x99c``\xf8\x0f\x00\x01\x01\x01\x00\x18\xdd\x8d\x1a\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+def _png_response(data: bytes) -> HttpResponse:
+    resp = HttpResponse(data, content_type="image/png")
+    resp["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+def favicon(request):
+    return _png_response(_PNG_DOT)
+
+def apple_touch_icon(request):
+    return _png_response(_PNG_DOT)
+
+def apple_touch_icon_precomposed(request):
+    return _png_response(_PNG_DOT)
+
+
 
 
 class OrganizationViewSet(viewsets.ModelViewSet):
