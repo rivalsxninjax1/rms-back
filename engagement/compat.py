@@ -2,7 +2,7 @@
 Compatibility shims for the engagement app.
 
 This exposes LoyaltyTier for legacy imports by redirecting to the new
-tip-based loyalty model living in the `loyalty` app (with historical label "loyality").
+tip-based loyalty model living in the `loyalty` app (internally using the historical label "loyality" for DB tables).
 
 Any code that previously did:
     from engagement.models import LoyaltyTier

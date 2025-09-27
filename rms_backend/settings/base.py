@@ -332,7 +332,7 @@ SPECTACULAR_SETTINGS = {
     "DESCRIPTION": (
         "Restaurant Management System API.\n\n"
         "This revision unifies duplicate models and standardizes cart/order endpoints.\n"
-        "Legacy loyalty endpoints remain available under /api/loyality/ but are deprecated."
+        "Loyalty endpoints are available under /api/loyalty/."
     ),
     "VERSION": "2.0.0",
     # Generate only for API routes

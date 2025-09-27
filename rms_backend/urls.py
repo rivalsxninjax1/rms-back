@@ -91,9 +91,8 @@ urlpatterns = [
     path("api/", include(("reservations.urls", "reservations"), namespace="reservations")),
     path("api/", include(("coupons.api_urls", "coupons_api"), namespace="coupons_api")),
     path("api/", include(("loyalty.api_urls", "loyalty_api"), namespace="loyalty_api")),
-    # Backward-compat: both spellings available during transition
+    # Canonical spelling only
     path("api/", include(("loyalty.urls", "loyalty"), namespace="loyalty")),
-    path("api/", include(("loyality.urls", "loyality"), namespace="loyality")),
     path("api/payments/", include(("payments.urls", "payments_api"), namespace="payments_api")),
     path("api/integrations/", include(("integrations.urls", "integrations"), namespace="integrations")),
 

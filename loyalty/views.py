@@ -113,31 +113,4 @@ def ranks_list(request: HttpRequest) -> JsonResponse:
         for r in ranks
     ]
     return JsonResponse({"ranks": data})
-from django.http import JsonResponse
-from django.views.decorators.http import require_GET
-from django.contrib.auth.decorators import login_required
-from .models import LoyaltyProfile
 
-@require_GET
-def loyalty_preview(request):
-    """
-    Return loyalty info for current user to show suggested tips
-    """
-    if not request.user.is_authenticated:
-        return JsonResponse({"eligible": False, "message": ""})
-    
-    try:
-        profile = LoyaltyProfile.objects.select_related('rank').get(user=request.user)
-        if profile.rank and profile.rank.is_active:
-            tip_amount = profile.tip_cents / 100.0  # Convert cents to currency
-            return JsonResponse({
-                "eligible": True,
-                "rank": profile.rank.name,
-                "suggested_tip_cents": profile.tip_cents,
-                "suggested_tip": tip_amount,
-                "message": f"As a {profile.rank.name}, we suggest a tip of NPR {tip_amount:.2f}"
-            })
-        else:
-            return JsonResponse({"eligible": False, "message": ""})
-    except LoyaltyProfile.DoesNotExist:
-        return JsonResponse({"eligible": False, "message": ""})

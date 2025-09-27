@@ -51,7 +51,7 @@ def clear_pending_tips_for_user(user) -> None:
 def best_loyalty_discount_for_user(user, subtotal: Decimal) -> Tuple[Decimal, Optional[str]]:
     """
     Computes the tip-based loyalty discount (fixed currency) and a friendly message
-    using loyality.services.eligible_discount_for_user. Returns (amount, message).
+    using loyalty.services.eligible_discount_for_user. Returns (amount, message).
     """
     subtotal = _q2(subtotal)
     try:

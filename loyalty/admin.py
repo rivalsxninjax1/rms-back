@@ -1,3 +1,4 @@
+# Re-export legacy admin registrations to trigger ModelAdmin bindings
 from __future__ import annotations
 
 from django.contrib import admin

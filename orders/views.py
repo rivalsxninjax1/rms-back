@@ -42,8 +42,8 @@ except Exception:  # pragma: no cover
         return False, Decimal("0.00"), "coupon service missing"
 
 # NOTE:
-# Keep the original import path ("loyalty.services") which is proxied to the new tip-based
-# logic implemented in the `loyality` app. If the proxy isn’t present, the safe stubs apply.
+# Use the canonical loyalty services. The loyalty app encapsulates the
+# tip-based loyalty logic. If unavailable, fall back to safe stubs.
 try:
     from loyalty.services import get_available_reward_for_user, reserve_reward_for_order  # type: ignore
 except Exception:  # pragma: no cover

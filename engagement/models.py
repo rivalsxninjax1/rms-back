@@ -10,7 +10,7 @@ from django.utils import timezone
 try:
     from loyalty.models import TipLoyaltySetting as LoyaltyTier  # noqa: F401
 except Exception:
-    # If loyality app is not ready yet, define a tiny placeholder so imports don't crash.
+    # If the loyalty app is not ready yet, define a tiny placeholder so imports don't crash.
     class LoyaltyTier:  # type: ignore
         pass
 

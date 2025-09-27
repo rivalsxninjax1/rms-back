@@ -2,6 +2,7 @@
 from __future__ import annotations
 import logging
 from typing import Optional, Dict, Any
+from decimal import Decimal
 
 from django.apps import apps
 from django.conf import settings
@@ -225,38 +226,47 @@ def process_loyalty_rewards_task(order_id: int):
             return  # No loyalty for guest orders
         
         try:
-            # Try to get loyalty models
-            LoyaltyAccount = apps.get_model('loyality', 'LoyaltyAccount')  # Note: typo in app name
-            LoyaltyTransaction = apps.get_model('loyality', 'LoyaltyTransaction')
-            
-            # Get or create loyalty account
-            loyalty_account, created = LoyaltyAccount.objects.get_or_create(
-                user=user,
-                defaults={'points_balance': 0}
-            )
-            
-            # Calculate points (e.g., 1 point per dollar spent)
-            points_earned = int(float(order.total))  # Simple 1:1 ratio
-            
-            # Award points
-            from django.db import transaction
-            with transaction.atomic():
-                loyalty_account.points_balance += points_earned
-                loyalty_account.save()
-                
-                # Record transaction
-                LoyaltyTransaction.objects.create(
-                    account=loyalty_account,
-                    transaction_type='earned',
-                    points=points_earned,
-                    order=order,
-                    description=f'Points earned from order #{getattr(order, "order_number", order.id)}'
-                )
-            
-            logger.info(f"Awarded {points_earned} loyalty points to user {user.id} for order {order_id}")
-            
-        except (LookupError, ImportError):
-            logger.info(f"Loyalty system not available for order {order_id}")
+            # Use canonical loyalty app models
+            from loyalty.models import LoyaltyProfile, LoyaltyPointsLedger
+
+            # Get or create a loyalty profile for the user
+            profile, _ = LoyaltyProfile.objects.get_or_create(user=user)
+
+            # Calculate points (default: 1 point per 1 currency unit)
+            try:
+                total = getattr(order, 'total', 0) or 0
+                total_amount = Decimal(str(total))
+            except Exception:
+                total_amount = Decimal("0")
+
+            earn_rate = Decimal("1.00")
+            try:
+                if profile.rank and profile.rank.is_active and profile.rank.earn_points_per_currency:
+                    earn_rate = Decimal(str(profile.rank.earn_points_per_currency))
+            except Exception:
+                pass
+
+            points_earned = int((total_amount * earn_rate).to_integral_value(rounding='ROUND_FLOOR'))
+
+            if points_earned > 0:
+                from django.db import transaction
+                with transaction.atomic():
+                    entry = LoyaltyPointsLedger.objects.create(
+                        profile=profile,
+                        delta=points_earned,
+                        type='EARN',
+                        reason='Points earned from order',
+                        reference=str(getattr(order, 'id', '')),
+                        created_by=None,
+                    )
+                    entry.apply()
+
+                logger.info(f"Awarded {points_earned} loyalty points to user {user.id} for order {order_id}")
+            else:
+                logger.info(f"No loyalty points awarded for order {order_id} (computed 0)")
+
+        except Exception:
+            logger.info(f"Loyalty system not available or failed for order {order_id}")
         
     except Exception:
         logger.exception(f"Failed to process loyalty rewards for order {order_id}")

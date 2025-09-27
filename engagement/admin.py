@@ -122,7 +122,7 @@ if LoyaltyTier is not None:
         """
         Works with either:
           - engagement.compat.LoyaltyTier (your project-specific fields), or
-          - loyality.LoyaltyRank (fallback; fields code/name/tip_cents/is_active/sort_order)
+          - loyalty.LoyaltyRank (fields code/name/tip_cents/is_active/sort_order)
         We only reference fields if they exist on the model to avoid runtime errors.
         """
         # Keep your original display when fields exist; otherwise fall back to id-only.
@@ -184,7 +184,7 @@ if LoyaltyTier is not None:
             except Exception:
                 # Render empty safely if orders app is not ready
                 ctx = {"title": "Top Tippers (by total tips paid)", "rows": [], "q": "", "date_from": "", "date_to": ""}
-                return render(request, "admin/loyality/top_tippers.html", ctx)
+                return render(request, "admin/loyalty/top_tippers.html", ctx)
 
             q = (request.GET.get("q") or "").strip()
             date_from = (request.GET.get("from") or "").strip()
@@ -279,7 +279,7 @@ if LoyaltyTier is not None:
                 "active": active,
                 "opts": LoyaltyTier._meta if hasattr(LoyaltyTier, "_meta") else None,
             }
-            return render(request, "admin/loyality/top_tippers.html", ctx)
+            return render(request, "admin/loyalty/top_tippers.html", ctx)
 
     _register_model_if_needed(LoyaltyTier, LoyaltyTierAdmin)
 

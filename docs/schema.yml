@@ -4,9 +4,9 @@ info:
   version: 2.0.0
   summary: Restaurant Management System API
   description: |
-    Unified API for cart, orders, order items, and payments.
+    Unified API for cart, orders, order items, payments, and loyalty.
     This revision consolidates duplicate models and standardizes endpoints.
-    Legacy loyalty endpoints remain under /api/loyality/ but are deprecated.
+    Loyalty endpoints are available under /api/loyalty/.
   x-sunset-policy:
     notice_period_days: 90
     contact: security@yourdomain.example
@@ -417,20 +417,19 @@ paths:
       description: Use /payments/webhook/ instead.
       responses: { '200': { description: OK } }
 
-  /api/loyality/loyalty/preview/:
+  
+  /api/loyalty/loyalty/preview/:
     get:
       tags: [Loyalty]
-      summary: Loyalty preview (deprecated)
-      deprecated: true
-      description: Use /api/loyalty/loyalty/preview/.
+      summary: Loyalty preview
+      description: Shows loyalty rank defaults and discount preview.
       responses: { '200': { description: OK } }
 
-  /api/loyality/loyalty/ranks/:
+  /api/loyalty/loyalty/ranks/:
     get:
       tags: [Loyalty]
-      summary: Loyalty ranks (deprecated)
-      deprecated: true
-      description: Use /api/loyalty/loyalty/ranks/.
+      summary: Loyalty ranks
+      description: Returns active loyalty ranks.
       responses: { '200': { description: OK } }
 
 components:
@@ -587,4 +586,3 @@ components:
       properties:
         cart_uuid: { type: string, format: uuid }
         notes: { type: string }
-
