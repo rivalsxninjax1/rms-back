@@ -1,584 +1,197 @@
-# Comprehensive REST API Documentation
+# API Documentation
+
+This document describes the REST API used by the storefront and admin SPA. It reflects the actual routes configured in rms_backend/urls.py:40–101.
+
+Base API URL
+- `https://<host>/api/` (all routers mounted here unless noted)
+- Accounts routes live under `https://<host>/accounts/`
+
+Auth Overview
+- Public: menu browse, carts (guest session), coupons preview, loyalty ranks.
+- JWT: login/register/profile; send `Authorization: Bearer <access>` for protected endpoints.
+- Session JSON (legacy storefront): simple login/logout with HTTP-only cookie.
+- Staff-only: writes on menu, coupons, loyalty profiles, reports, some payments and integrations.
+
+OpenAPI/Docs
+- Schema: `GET /api/schema/`
+- Swagger UI: `GET /api/docs/`
+- Redoc: `GET /api/redoc/`
+
+Headers & Conventions
+- `Authorization: Bearer <access>` for JWT-protected endpoints.
+- JSON requests and responses; datetimes are ISO 8601.
+- Pagination: DRF PageNumber (`?page=1&?page_size=20`, max 100 where enabled).
+- Filtering/ordering/search: DRF conventions where specified below.
+
+Accounts (JWT + Session)
+- POST `/accounts/api/login/` — obtain `{access, refresh, user}`. Accepts username or email + password.
+- POST `/accounts/api/register/` — create user; returns `{user, access, refresh}`.
+- POST `/accounts/api/logout/` — blacklist `refresh`, end session (JWT required).
+- POST `/accounts/api/token/refresh/` — refresh token.
+- POST `/accounts/api/token/session/` — exchange current session for JWT (session cookie required).
+- POST `/accounts/api/token/verify/` — verify token.
+- GET/PUT `/accounts/api/profile/` — get/update current user profile (JWT).
+- POST `/accounts/api/change-password/` — change password (JWT).
+- POST `/accounts/api/password-reset/` — request reset email.
+- POST `/accounts/api/password-reset/confirm/` — confirm reset with token.
+- Legacy session JSON (cookie-based):
+  - POST `/accounts/login/` — `{username,password}` → sets session cookie.
+  - POST `/accounts/register/` — creates user + logs in.
+  - POST `/accounts/logout/`
+  - GET `/accounts/auth/whoami/` — `{ok,is_auth,user,csrf}` ping for storefront.
+  - GET `/accounts/me/` — session user info.
+
+Menu
+- GET `/api/categories/` — active categories (AllowAny; search=`name,description`, order by `sort_order,name`).
+- GET `/api/categories/{id}/` — category details.
+- GET `/api/categories/with_items/` — categories with available items (cached 15m).
+- GET `/api/categories/{id}/items/` — available items for a category.
+- GET `/api/items/` — list items (AllowAny). Filters: `search`, `category_id`, `is_vegan`, `is_gluten_free`, `min_price`, `max_price`. Ordering: `name,sort_order,created_at`.
+- GET `/api/items/{id}/` — item detail.
+- GET `/api/items/{id}/modifiers/` — modifier groups for item.
+- GET `/api/items/featured/` — featured items.
+- GET `/api/modifier-groups/` — groups; GET `/api/modifier-groups/{id}/`; GET `/api/modifier-groups/{id}/modifiers/`.
+- GET `/api/modifiers/` — modifiers; GET `/api/modifiers/{id}/`.
+- Admin-only utilities on items:
+  - GET `/api/items/export_csv/` — CSV export (staff).
+  - POST `/api/items/import_csv/` — upload CSV (staff, file=`file`).
+- Display bundle:
+  - GET `/api/display/` — `{categories, featured_items, totals, last_updated}` (cached 30m).
+  - POST `/api/display/clear_cache/` (staff), GET `/api/display/stats/`.
+
+Carts (Orders)
+- Router base: `/api/carts/` (AllowAny; session-backed for guests).
+- GET `/api/carts/` — get/create current cart; returns one cart with items and totals.
+- POST `/api/carts/add_item/` — body `{menu_item_id, quantity, selected_modifiers?, notes?}`.
+- PATCH `/api/carts/update_item/` — body `{cart_item_id, quantity, notes?}` (quantity=0 removes item).
+- DELETE `/api/carts/remove_item/` — body `{cart_item_id}`.
+- DELETE `/api/carts/clear/` — clear cart.
+- GET `/api/carts/summary/` — quick numbers and amounts.
+- POST `/api/carts/merge/` — body `{anonymous_cart_uuid}`; requires JWT (merges into user cart).
+- GET `/api/carts/modifiers/?menu_item=<id>` — modifiers for a specific item or for items in cart.
+- POST `/api/carts/apply_coupon/` — body `{coupon_code}`.
+- POST `/api/carts/remove_coupon/` — remove any applied coupon.
+- POST `/api/carts/set_tip/` — body `{tip_amount}` or `{tip_percentage}` (one of them).
+- GET `/api/carts/analytics/` — cart-level analytics.
+- POST `/api/carts/validate_integrity/` — validate cart structure/prices.
+
+Orders
+- Router base: `/api/orders/` (AllowAny; data filtered by user/session).
+- GET `/api/orders/` — list orders (JWT: own; anonymous: session orders; staff/roles: all). Filters: `status, delivery_option`.
+- POST `/api/orders/` — create order from cart. Body `{cart_uuid, notes?, delivery_option?}`.
+- GET `/api/orders/{id}/` — order detail (includes items and totals).
+- GET `/api/orders/{id}/track/` — lightweight tracking info.
+- GET `/api/orders/recent/` — recent 5 for current user/session.
+- POST `/api/orders/{id}/cancel/` — cancel if allowed.
+- POST `/api/orders/{id}/refund/` — refund (business rules apply).
+- PATCH `/api/orders/{id}/update_status/` — staff/admin; body `{status, reason?, notes?}`.
+- GET `/api/orders/{id}/status_history/` — full history with durations.
+- GET `/api/orders/{id}/analytics/` — order analytics snapshot.
+- POST `/api/orders/cleanup_expired_carts/` — staff only.
+
+Order Items
+- Router base: `/api/order-items/`.
+- GET `/api/order-items/` — items for accessible orders; filters: `status, order__status`.
+- PATCH `/api/order-items/{id}/update_status/` — update single item (kitchen flows).
+- GET `/api/order-items/order/{order_id}/` — items for an order.
+- GET `/api/order-items/preparation_queue/` — kitchen queue (confirmed/preparing items).
+
+Coupons
+- Router base: `/api/coupons/` (list/preview AllowAny; writes staff-only).
+- GET `/api/coupons/` — list; filters: `active, discount_type, customer_type`; search: `code,name,description,phrase`.
+- GET `/api/coupons/{id}/` — detail.
+- GET `/api/coupons/{id}/preview/?order_total=<decimal>&item_count=<int>&user_id?<id>&first?<bool>` — compute discount preview.
+
+Loyalty
+- Router base: `/api/loyalty/*`.
+- GET `/api/loyalty/ranks/` — public ranks.
+- Authenticated:
+  - GET `/api/loyalty/profiles/` — own profile (staff lists all).
+  - POST `/api/loyalty/profiles/{id}/adjust/` — staff; body `{delta, reason, reference?}`.
+  - GET `/api/loyalty/profiles/{id}/ledger/` — entries; also ReadOnly `/api/loyalty/ledger/` with filters.
+  - GET `/api/loyalty/profiles/export_csv/` — staff CSV.
+
+Payments
+- Mounted at both `/payments/` (legacy views) and `/api/payments/` (for SPA).
+- POST `/api/payments/payment-intent/create/` — body `{amount_cents:int, currency?:str, order_id?:int, metadata?:{}}`; returns `{payment_intent_id, client_secret, amount_cents, currency, status}` (JWT).
+- GET `/api/payments/payment-intent/{id}/status/` — status for own intent (JWT).
+- POST `/api/payments/payment-intent/{id}/cancel/` — cancel if possible (JWT).
+- POST `/api/payments/offline/` — record offline payment; body `{order_id, method:'cash'|'pos_card', amount, notes?}` (JWT; typically staff).
+- POST `/api/payments/receipt/{order_id}/` — returns PDF response (JWT).
+- Stripe webhooks: POST `/api/payments/webhook/` (Stripe only; server-side).
+- Legacy checkout (session): POST `/payments/checkout/` — Stripe Checkout session or simulated payment; success/cancel landing pages under `/payments/checkout-success|checkout-cancel/`.
+
+Reservations (Portal + API)
+- Portal (customer UI): under `/reserve/`
+  - GET `/reserve/api/availability/` — see reservations/urls_portal.py:19–22.
+  - POST `/reserve/api/reservations/` — create.
+  - POST `/reserve/api/deposits/success/` — deposit callback.
+  - POST `/reserve/api/holds/create/` — create a temporary hold.
+- API (admin and staff tools):
+  - GET `/api/reservations/tables/` — filterable tables; GET `/api/reservations/tables/availability/` for windowed availability.
+  - CRUD `/api/reservations/` — ReservationViewSet; actions: `confirm`, `cancel`, `check_in` (admin), `walkin` (POST body `{table_id, minutes?, guest_name?, party_size?, phone?}`) and more. See reservations/views.py:84–220 for request/response details.
+
+Core (Org/Location/Service Types)
+- Router base: `/api/core/` (read-only for storefront context).
+- GET `/api/core/organizations/`
+- GET `/api/core/locations/` and `/api/core/locations/{id}/`
+- GET `/api/core/service-types/` and `/api/core/service-types/{id}/availability/?date=YYYY-MM-DD`
+- GET `/api/core/tables/` and `/api/core/tables/{id}/availability/?date=YYYY-MM-DD&time=HH:MM&duration=120`
+
+Reports (Admin)
+- Router base: `/api/reports/`
+- GET `/api/reports/daily-sales/` — admin list; actions: `/payments` (date range) and `/export_csv`.
+- GET `/api/reports/shifts/` — admin list; actions: `open`, `close`, `z_report`.
+- GET `/api/analytics/orders/` — order analytics; actions: `revenue_trends`, `customer_insights`.
+- GET `/api/analytics/menu/` — item/category performance.
+- GET `/api/audit-logs/` — admin audit logs.
+
+Integrations (Admin)
+- POST `/api/integrations/menu/sync/` — push menu to providers.
+- POST `/api/integrations/inventory/availability/` — toggle item availability.
+- GET `/api/integrations/orders/recent/` — deprecated placeholder.
+- GET `/api/integrations/reports/sales/` — placeholder.
+- POST `/api/integrations/order/status/` — push external status.
+- Provider webhooks (server-side): `/api/integrations/ubereats/webhook/`, `/api/integrations/doordash/webhook/`, `/api/integrations/grubhub/webhook/`.
+
+WebSockets (ASGI)
+- Orders: `ws://<host>/ws/orders/` — live order events (admin SPA).
+- Reports: `ws://<host>/ws/reports/` — reporting events.
+
+Key Payloads
+- Add to cart (POST `/api/carts/add_item/`):
+  - `{ "menu_item_id": 123, "quantity": 2, "selected_modifiers": [{"modifier_id": 456, "quantity": 1}], "notes": "no onions" }`
+- Update cart item (PATCH `/api/carts/update_item/`):
+  - `{ "cart_item_id": 789, "quantity": 3, "notes": "extra spicy" }`
+- Create order (POST `/api/orders/`):
+  - `{ "cart_uuid": "uuid-string", "notes": "leave at door", "delivery_option": "TAKEAWAY" }`
+- Create payment intent (POST `/api/payments/payment-intent/create/`):
+  - `{ "amount_cents": 5466, "currency": "usd", "order_id": 1001, "metadata": {"source": "web"} }`
+- Loyalty adjust (POST `/api/loyalty/profiles/{id}/adjust/`):
+  - `{ "delta": 50, "reason": "Manual bonus", "reference": "PROMO2024" }`
+
+Auth & Roles
+- Anonymous: carts, menu browse, coupon preview, order creation from own cart, order tracking for own session.
+- Authenticated: profile, own orders, payments, loyalty profile.
+- Staff/roles (Manager, Cashier, Kitchen, Host): broad order visibility and status updates.
+
+Errors & Status Codes
+- Errors use `{ "error" | "detail": <message> }` plus field errors when applicable.
+- Common HTTP codes: 200, 201, 204, 400, 401, 403, 404, 409, 500.
+
+Notes & Limits
+- Login/register/password reset are rate-limited via DRF throttle scopes (`login`, `register`, `password_reset`). Configure rates in REST_FRAMEWORK settings.
+- Menu display and category-with-items responses are cached (15–30 minutes). Admin cache clear is provided.
+
+Environment
+- Stripe: `STRIPE_SECRET_KEY`, `STRIPE_CURRENCY`, `STRIPE_WEBHOOK_SECRET` for live payment flows.
+- Integrations optional secrets: `DELIVERECT_WEBHOOK_SECRET`, `OTTER_WEBHOOK_SECRET`, `CHOWLY_WEBHOOK_SECRET`, `CHECKMATE_WEBHOOK_SECRET`, `CUBOH_WEBHOOK_SECRET`.
+
+Quick Start (Storefront Flow)
+- Browse menu: `GET /api/display/` or `GET /api/categories/` then `GET /api/items/?category_id=...`.
+- Build cart as guest: `GET /api/carts/` then `POST /api/carts/add_item/` repeatedly.
+- Show summary: `GET /api/carts/summary/`.
+- Optional login: `POST /accounts/api/login/` then `POST /api/carts/merge/` with previous `anonymous_cart_uuid`.
+- Create order: `POST /api/orders/` with `cart_uuid`.
+- Pay: `POST /api/payments/payment-intent/create/` then confirm on client with Stripe using `client_secret`.
 
-This document describes the comprehensive REST API endpoints implemented for the Restaurant Management System.
-
-## Overview
-
-The API provides full CRUD operations for all major entities in the system:
-- **Menu Management**: Categories, Items, Modifiers
-- **Order Management**: Carts, Orders, Order Items
-- **Core Services**: Organizations, Locations, Service Types, Tables, Reservations
-
-All APIs follow REST conventions and use Django REST Framework with proper serialization, validation, and error handling.
-
-## Authentication
-
-- **Public APIs**: Menu browsing, cart operations (guest users)
-- **Authenticated APIs**: Order creation, reservations, user-specific data
-- **Admin APIs**: Full management operations (staff only)
-
-## Base URLs
-
-- **Core API**: `/core/api/`
-- **Menu API**: `/menu/api/`
-- **Orders API**: `/orders/api/`
-
-## Base URL
-```
-http://localhost:8000/api/
-```
-
-## Menu API Endpoints
-
-### Public Menu APIs
-
-### Menu Categories
-- **GET** `/api/menu/categories/` - List all active menu categories
-- **GET** `/api/menu/categories/{id}/` - Get specific category details
-- **GET** `/api/menu/categories/{id}/items/` - Get all items in a category
-
-#### Menu Categories
-```
-GET /menu/api/categories/
-- List all active menu categories
-- Response: Array of category objects with nested items
-
-GET /menu/api/categories/{id}/
-- Get specific category details
-- Response: Category object with full details
-
-GET /menu/api/categories/{id}/items/
-- Get all menu items for a category
-- Response: Array of menu item objects
-```
-
-### Menu Items
-- **GET** `/api/menu/items/` - List all available menu items
-- **GET** `/api/menu/items/{id}/` - Get specific item details
-- **GET** `/api/menu/items/search/?q={query}` - Search menu items
-
-#### Menu Items
-```
-GET /menu/api/items/
-- List all available menu items
-- Query parameters:
-  - category: Filter by category ID
-  - search: Search in name/description
-  - vegetarian: Filter vegetarian items (true/false)
-  - min_price: Minimum price filter
-  - max_price: Maximum price filter
-- Response: Array of menu item objects
-
-GET /menu/api/items/{id}/
-- Get specific menu item details
-- Response: Menu item object with modifiers
-
-GET /menu/api/items/{id}/modifiers/
-- Get all modifier groups for a menu item
-- Response: Array of modifier group objects
-
-GET /menu/api/items/featured/
-- Get featured menu items
-- Response: Array of featured items (top 8)
-
-GET /menu/api/items/popular/
-- Get popular menu items
-- Response: Array of popular items (top 6)
-```
-
-### Modifier Groups
-- **GET** `/api/menu/modifier-groups/` - List all modifier groups
-- **GET** `/api/menu/modifier-groups/{id}/` - Get specific modifier group
-
-#### Modifiers
-```
-GET /menu/api/modifier-groups/
-- List all active modifier groups
-- Response: Array of modifier group objects
-
-GET /menu/api/modifier-groups/{id}/
-- Get specific modifier group
-- Response: Modifier group object with modifiers
-
-GET /menu/api/modifiers/
-- List all available modifiers
-- Response: Array of modifier objects
-```
-
-### Admin Menu APIs
-
-#### Category Management
-```
-GET /menu/api/admin/categories/
-POST /menu/api/admin/categories/
-GET /menu/api/admin/categories/{id}/
-PUT /menu/api/admin/categories/{id}/
-PATCH /menu/api/admin/categories/{id}/
-DELETE /menu/api/admin/categories/{id}/
-- Full CRUD operations for menu categories
-- Requires admin permissions
-```
-
-#### Item Management
-```
-GET /menu/api/admin/items/
-POST /menu/api/admin/items/
-GET /menu/api/admin/items/{id}/
-PUT /menu/api/admin/items/{id}/
-PATCH /menu/api/admin/items/{id}/
-DELETE /menu/api/admin/items/{id}/
-- Full CRUD operations for menu items
-- Requires admin permissions
-
-POST /menu/api/admin/items/{id}/toggle_availability/
-- Toggle menu item availability
-- Response: Updated menu item object
-```
-
-## Orders API Endpoints
-
-### Cart Management
-- **GET** `/api/orders/carts/` - Get current user's cart
-- **POST** `/api/orders/carts/` - Create new cart
-- **POST** `/api/orders/carts/{id}/add_item/` - Add item to cart
-- **PUT** `/api/orders/carts/{id}/update_item/` - Update cart item
-- **DELETE** `/api/orders/carts/{id}/remove_item/` - Remove item from cart
-- **POST** `/api/orders/carts/{id}/clear/` - Clear all items from cart
-- **POST** `/api/orders/carts/{id}/set_tip/` - Set tip amount
-
-### Cart Management
-```
-GET /orders/api/carts/
-- List user's carts (or session carts for guests)
-- Response: Array of cart objects
-
-POST /orders/api/carts/
-- Create new cart
-- Request body: Cart data
-- Response: Created cart object
-
-GET /orders/api/carts/{id}/
-- Get specific cart with items
-- Response: Cart object with nested items
-
-PUT /orders/api/carts/{id}/
-PATCH /orders/api/carts/{id}/
-- Update cart details
-- Response: Updated cart object
-
-DELETE /orders/api/carts/{id}/
-- Delete cart
-- Response: 204 No Content
-```
-
-### Cart Item Operations
-```
-POST /orders/api/carts/{id}/add_item/
-- Add item to cart with server-side price calculation
-- Request body:
-  {
-    "menu_item_id": 123,
-    "quantity": 2,
-    "modifiers": [
-      {"modifier_id": 456, "quantity": 1}
-    ]
-  }
-- Response: Created cart item object
-
-POST /orders/api/carts/{id}/update_item/
-- Update cart item quantity
-- Request body: {"item_id": 789, "quantity": 3}
-- Response: Updated cart item object
-
-POST /orders/api/carts/{id}/remove_item/
-- Remove item from cart
-- Request body: {"item_id": 789}
-- Response: Success message
-
-POST /orders/api/carts/{id}/clear/
-- Clear all items from cart
-- Response: Success message
-
-POST /orders/api/carts/{id}/set_tip/
-- Set tip amount for cart
-- Request body: {"tip_amount": "5.00"}
-- Response: Updated cart object
-```
-
-### Order Management
-- **GET** `/api/orders/orders/` - List user's orders
-- **POST** `/api/orders/orders/` - Create order from cart
-- **GET** `/api/orders/orders/{id}/` - Get specific order details
-- **POST** `/api/orders/orders/{id}/cancel/` - Cancel order
-- **GET** `/api/orders/orders/my_orders/` - Get current user's orders
-
-### Order Management
-```
-GET /orders/api/orders/
-- List user's orders
-- Response: Array of order list objects
-
-POST /orders/api/orders/
-- Create order from cart
-- Request body:
-  {
-    "cart_id": 123,
-    "customer_name": "John Doe",
-    "customer_email": "john@example.com",
-    "customer_phone": "+1234567890",
-    "service_type_id": 1,
-    "table_id": 5,
-    "special_instructions": "No onions"
-  }
-- Response: Created order object
-
-GET /orders/api/orders/{id}/
-- Get specific order details
-- Response: Full order object with items
-
-POST /orders/api/orders/{id}/cancel/
-- Cancel order (if possible)
-- Response: Updated order object
-
-GET /orders/api/orders/my_orders/
-- Get current user's recent orders
-- Response: Array of recent orders (last 20)
-```
-
-## Core API Endpoints
-
-### Organizations & Locations
-- **GET** `/api/core/organizations/` - List all organizations
-- **GET** `/api/core/locations/` - List all locations
-- **GET** `/api/core/locations/{id}/` - Get specific location details
-
-### Organization & Location
-```
-GET /core/api/organizations/
-- List active organizations
-- Response: Array of organization objects
-
-GET /core/api/locations/
-- List active locations
-- Response: Array of location objects
-```
-
-### Service Types & Tables
-- **GET** `/api/core/service-types/` - List all service types
-- **GET** `/api/core/tables/` - List available tables
-- **GET** `/api/core/tables/{id}/availability/` - Check table availability
-
-### Service Types
-```
-GET /core/api/service-types/
-- List active service types
-- Response: Array of service type objects
-
-GET /core/api/service-types/{id}/availability/
-- Check availability for a service type on specific date
-- Query parameters: date (YYYY-MM-DD)
-- Response: Availability data with time slots
-```
-
-### Table Management
-```
-GET /core/api/tables/
-- List active tables
-- Query parameters:
-  - service_type: Filter by service type ID
-  - min_capacity: Minimum capacity filter
-- Response: Array of table objects
-
-GET /core/api/tables/{id}/
-- Get specific table details
-- Response: Table object
-
-GET /core/api/tables/{id}/availability/
-- Check table availability
-- Query parameters:
-  - date: Date (YYYY-MM-DD)
-  - time: Time (HH:MM)
-  - duration: Duration in minutes (default: 120)
-- Response: Availability status and conflicts
-```
-
-### Reservations
-- **GET** `/api/core/reservations/` - List user's reservations
-- **POST** `/api/core/reservations/` - Create new reservation
-- **GET** `/api/core/reservations/{id}/` - Get specific reservation
-- **PUT** `/api/core/reservations/{id}/` - Update reservation
-- **DELETE** `/api/core/reservations/{id}/` - Cancel reservation
-- **GET** `/api/core/reservations/upcoming/` - Get upcoming reservations
-- **GET** `/api/core/reservations/history/` - Get reservation history
-
-### Reservation Management
-```
-GET /core/api/reservations/
-- List user's reservations
-- Query parameters:
-  - status: Filter by status
-  - start_date: Start date filter (YYYY-MM-DD)
-  - end_date: End date filter (YYYY-MM-DD)
-- Response: Array of reservation list objects
-
-POST /core/api/reservations/
-- Create new reservation
-- Request body:
-  {
-    "service_type_id": 1,
-    "table_id": 5,
-    "reservation_time": "2024-01-15T19:00:00Z",
-    "party_size": 4,
-    "duration_minutes": 120,
-    "customer_name": "John Doe",
-    "customer_email": "john@example.com",
-    "customer_phone": "+1234567890",
-    "special_requests": "Window table preferred"
-  }
-- Response: Created reservation object
-
-GET /core/api/reservations/{id}/
-- Get specific reservation details
-- Response: Full reservation object
-
-PUT /core/api/reservations/{id}/
-PATCH /core/api/reservations/{id}/
-- Update reservation
-- Response: Updated reservation object
-
-DELETE /core/api/reservations/{id}/
-- Delete reservation
-- Response: 204 No Content
-
-POST /core/api/reservations/{id}/cancel/
-- Cancel reservation
-- Response: Updated reservation object
-
-POST /core/api/reservations/{id}/modify/
-- Modify reservation details
-- Request body: Updated reservation data
-- Response: Updated reservation object
-
-GET /core/api/reservations/upcoming/
-- Get upcoming reservations for user
-- Response: Array of upcoming reservations (next 5)
-
-GET /core/api/reservations/history/
-- Get reservation history for user
-- Response: Array of past reservations (last 20)
-```
-
-### Admin Core APIs
-
-#### Table Management
-```
-GET /core/api/admin/tables/
-POST /core/api/admin/tables/
-GET /core/api/admin/tables/{id}/
-PUT /core/api/admin/tables/{id}/
-PATCH /core/api/admin/tables/{id}/
-DELETE /core/api/admin/tables/{id}/
-- Full CRUD operations for tables
-- Requires admin permissions
-
-POST /core/api/admin/tables/{id}/toggle_active/
-- Toggle table active status
-- Response: Updated table object
-```
-
-#### Reservation Management
-```
-GET /core/api/admin/reservations/
-POST /core/api/admin/reservations/
-GET /core/api/admin/reservations/{id}/
-PUT /core/api/admin/reservations/{id}/
-PATCH /core/api/admin/reservations/{id}/
-DELETE /core/api/admin/reservations/{id}/
-- Full CRUD operations for reservations
-- Requires admin permissions
-
-POST /core/api/admin/reservations/{id}/mark_seated/
-- Mark reservation as seated
-- Response: Updated reservation object
-
-POST /core/api/admin/reservations/{id}/mark_completed/
-- Mark reservation as completed
-- Response: Updated reservation object
-
-POST /core/api/admin/reservations/{id}/mark_no_show/
-- Mark reservation as no show
-- Response: Updated reservation object
-```
-
-## Data Models
-
-### Menu Item Object
-```json
-{
-  "id": 123,
-  "name": "Margherita Pizza",
-  "description": "Fresh tomatoes, mozzarella, basil",
-  "price": "18.99",
-  "image": "http://example.com/media/pizza.jpg",
-  "category": {
-    "id": 1,
-    "name": "Pizzas"
-  },
-  "is_vegetarian": true,
-  "is_available": true,
-  "preparation_time": 15,
-  "modifier_groups": [
-    {
-      "id": 1,
-      "name": "Size",
-      "is_required": true,
-      "max_selections": 1,
-      "modifiers": [
-        {
-          "id": 1,
-          "name": "Small",
-          "price_adjustment": "0.00"
-        },
-        {
-          "id": 2,
-          "name": "Large",
-          "price_adjustment": "4.00"
-        }
-      ]
-    }
-  ]
-}
-```
-
-### Cart Object
-```json
-{
-  "id": 456,
-  "items": [
-    {
-      "id": 789,
-      "menu_item": {
-        "id": 123,
-        "name": "Margherita Pizza",
-        "price": "18.99"
-      },
-      "quantity": 2,
-      "modifiers": [
-        {"modifier_id": 2, "quantity": 1}
-      ],
-      "unit_price": "22.99",
-      "total_price": "45.98"
-    }
-  ],
-  "subtotal": "45.98",
-  "tax_amount": "3.68",
-  "tip_amount": "5.00",
-  "total_amount": "54.66",
-  "created_at": "2024-01-15T10:30:00Z",
-  "updated_at": "2024-01-15T10:35:00Z"
-}
-```
-
-### Order Object
-```json
-{
-  "id": 1001,
-  "order_number": "ORD-2024-001001",
-  "status": "confirmed",
-  "customer_name": "John Doe",
-  "customer_email": "john@example.com",
-  "customer_phone": "+1234567890",
-  "service_type_name": "Dine In",
-  "table_number": "5",
-  "items": [
-    {
-      "id": 2001,
-      "menu_item_name": "Margherita Pizza",
-      "quantity": 2,
-      "unit_price": "22.99",
-      "total_price": "45.98",
-      "modifiers_display": "Large"
-    }
-  ],
-  "subtotal": "45.98",
-  "tax_amount": "3.68",
-  "tip_amount": "5.00",
-  "total_amount": "54.66",
-  "payment": {
-    "amount": "54.66",
-    "currency": "USD",
-    "is_paid": true,
-    "stripe_payment_intent_id": "pi_1234567890"
-  },
-  "special_instructions": "No onions",
-  "created_at": "2024-01-15T10:40:00Z",
-  "estimated_ready_time": "2024-01-15T11:00:00Z"
-}
-```
-
-### Reservation Object
-```json
-{
-  "id": 501,
-  "reservation_time": "2024-01-15T19:00:00Z",
-  "end_time": "2024-01-15T21:00:00Z",
-  "party_size": 4,
-  "status": "confirmed",
-  "customer_name": "Jane Smith",
-  "customer_email": "jane@example.com",
-  "customer_phone": "+1234567890",
-  "service_type": {
-    "id": 1,
-    "name": "Dine In",
-    "code": "DINE_IN"
-  },
-  "table": {
-    "id": 5,
-    "table_number": "5",
-    "capacity": 6
-  },
-  "special_requests": "Window table preferred",
-  "created_at": "2024-01-10T14:30:00Z"
-}
-```
-
-## Error Handling
-
-All APIs return consistent error responses:
-
-```json
-{
-  "error": "Error message",
-  "details": {
-    "field_name": ["Field-specific error message"]
-  }
-}
-```
-
-Common HTTP status codes:
-- `200 OK`: Successful GET, PUT, PATCH
-- `201 Created`: Successful POST
-- `204 No Content`: Successful DELETE
-- `400 Bad Request`: Validation errors
-- `401 Unauthorized`: Authentication required
-- `403 Forbidden`: Permission denied
-- `404 Not Found`: Resource not found
-- `500 Internal Server Error`: Server error
-
-## Rate Limiting
-
-- Public APIs: 100 requests per minute per IP
-- Authenticated APIs: 1000 requests per minute per user
-- Admin APIs: 2000 requests per minute per admin user
-
-## Caching
-
-- Menu data is cached for 15 minutes
-- Organization/Location data is cached for 1 hour
-- Service types and tables are cached for 30 minutes
-
-## API Versioning
-
-All APIs are currently version 1. Future versions will be accessible via:
-- Header: `Accept: application/vnd.api+json;version=2`
-- URL: `/v2/menu/api/items/`

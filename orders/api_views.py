@@ -751,14 +751,28 @@ class OrderViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'delivery_option']
     
     def get_queryset(self):
-        """Get orders based on user authentication with eager loading."""
+        """Get orders based on user authentication with eager loading.
+
+        Staff users see all orders.
+        Authenticated users in operational roles (Manager, Cashier, Kitchen, Host)
+        also see all orders to support the admin SPA Live Dashboard.
+        Regular authenticated users see only their own orders.
+        Anonymous users see only orders tied to their current session cart.
+        """
         base = Order.objects.select_related('user', 'table').prefetch_related(
             'items__menu_item', 'items__menu_item__category'
         )
-        if getattr(self.request.user, "is_staff", False):
+        user = getattr(self.request, 'user', None)
+        if getattr(user, "is_staff", False):
             return base.order_by('-created_at')
-        if self.request.user.is_authenticated:
-            return base.filter(user=self.request.user).order_by('-created_at')
+        if getattr(user, 'is_authenticated', False):
+            try:
+                roles = set(user.groups.values_list('name', flat=True))
+            except Exception:
+                roles = set()
+            if roles.intersection({"Manager", "Cashier", "Kitchen", "Host"}):
+                return base.order_by('-created_at')
+            return base.filter(user=user).order_by('-created_at')
         # For anonymous users, only show orders from current session
         session_key = self.request.session.session_key
         if session_key:

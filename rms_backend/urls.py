@@ -7,6 +7,7 @@ from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
+from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.static import serve as static_serve
 import os
 from django.contrib.auth.decorators import login_required
@@ -17,6 +18,7 @@ from core.views import (
     favicon, apple_touch_icon, apple_touch_icon_precomposed,
 )
 
+@method_decorator(xframe_options_exempt, name="dispatch")
 class AdminSPAView(TemplateView):
     # Serve the new rms-admin dist if present; otherwise fall back to legacy template
     template_name = "admin_spa/index.html"

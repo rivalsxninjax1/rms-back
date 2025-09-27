@@ -12,6 +12,7 @@ from .views import (
     LogoutView,
     PasswordResetRequestView,
     PasswordResetConfirmView,
+    SessionTokenExchangeView,
     # Session-based views (backward compatibility)
     whoami,
     SessionLogout,
@@ -28,6 +29,7 @@ urlpatterns = [
     path("api/register/", RegisterView.as_view(), name="jwt_register"),
     path("api/logout/", LogoutView.as_view(), name="jwt_logout"),
     path("api/token/refresh/", CustomTokenRefreshView.as_view(), name="jwt_refresh"),
+    path("api/token/session/", SessionTokenExchangeView.as_view(), name="jwt_session"),
     path("api/token/verify/", TokenVerifyView.as_view(), name="jwt_verify"),
     
     # User Profile Management

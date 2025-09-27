@@ -196,7 +196,7 @@ class UserProfileView(APIView):
     def get(self, request):
         serializer = UserProfileSerializer(request.user)
         return Response(serializer.data)
-    
+
     def put(self, request):
         serializer = UserProfileSerializer(
             request.user, 
@@ -205,7 +205,30 @@ class UserProfileView(APIView):
         )
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data)
+        return Response(serializer.data)
+
+
+class SessionTokenExchangeView(APIView):
+    """Issue JWT pair for authenticated session users (for embedded SPA)."""
+
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [CsrfExemptSessionAuthentication]
+
+    def post(self, request):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({"detail": "Authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        refresh = RefreshToken.for_user(user)
+        data = {
+            "access": str(refresh.access_token),
+            "refresh": str(refresh),
+            "user": {
+                "id": user.id,
+                "username": user.get_username(),
+                "email": user.email or "",
+            },
+        }
+        return Response(data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useOrders, useOrderUpdateStatus } from '../hooks/orders'
+import { Summary } from '../components/live/Summary'
+import { Controls } from '../components/live/Controls'
+import { OrderCard } from '../components/live/OrderCard'
 
 interface OrderItem {
   id: number
@@ -30,25 +33,7 @@ interface Order {
   notes?: string
 }
 
-const statusColor = (status: string) => {
-  const s = String(status||'').toLowerCase()
-  if (s.includes('pending')) return 'border-yellow-400 bg-yellow-50'
-  if (s.includes('preparing') || s.includes('confirmed') || s.includes('out_for_delivery')) return 'border-orange-400 bg-orange-50'
-  if (s.includes('ready') || s.includes('served')) return 'border-green-500 bg-green-50'
-  if (s.includes('completed')) return 'border-gray-300 bg-gray-50'
-  if (s.includes('cancel')) return 'border-red-300 bg-red-50'
-  return 'border-gray-200 bg-white'
-}
-
-const pillColor = (status: string) => {
-  const s = String(status||'').toLowerCase()
-  if (s.includes('pending')) return 'bg-yellow-100 text-yellow-800'
-  if (s.includes('preparing') || s.includes('confirmed') || s.includes('out_for_delivery')) return 'bg-orange-100 text-orange-800'
-  if (s.includes('ready') || s.includes('served')) return 'bg-green-100 text-green-800'
-  if (s.includes('completed')) return 'bg-gray-100 text-gray-800'
-  if (s.includes('cancel')) return 'bg-red-100 text-red-800'
-  return 'bg-gray-100 text-gray-800'
-}
+// styling moved into OrderCard component
 
 export default function LiveDashboard() {
   const [mute, setMute] = useState<boolean>(() => {
@@ -136,92 +121,36 @@ export default function LiveDashboard() {
     return counts
   }, [live])
 
-  const actionBtn = (label: string, onClick: () => void, className = '') => (
-    <button onClick={onClick} className={`px-2 py-1 text-xs border rounded ${className}`}>{label}</button>
-  )
-
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border rounded-md">
-        <div className="px-3 py-2 flex items-center justify-between text-sm">
-          <div className="font-medium">Active Orders: {summary.active} | Preparing: {summary.preparing} | Ready: {summary.ready}</div>
-          <div className="flex items-center gap-3">
-            <button onClick={()=>{ setMute(m=>{ try{ localStorage.setItem('ordersMute', !m ? '1':'0') }catch{} return !m }) }} className="px-2 py-1 border rounded text-xs">{mute ? 'Unmute' : 'Mute'}</button>
-            <span className="text-gray-500">{live.length} shown</span>
-          </div>
-        </div>
-      </div>
+      <Summary active={summary.active} pending={summary.pending} preparing={summary.preparing} ready={summary.ready} wsConnected={!!wsRef.current} />
+      <Controls mute={mute} setMute={(v)=>{ try{ localStorage.setItem('ordersMute', v ? '1' : '0') }catch{}; setMute(v) }} count={live.length} />
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {orders.isLoading && (
           <div className="text-gray-500">Loading…</div>
         )}
+        {orders.isError && (
+          <div className="text-rose-700">Unable to load orders. Ensure you are signed in and have Manager/Cashier/Kitchen/Host role.</div>
+        )}
         {!orders.isLoading && live.length === 0 && (
           <div className="text-gray-500">No live online orders</div>
         )}
-        {live.map((o) => {
-          const highlight = highlights[o.id]
-          return (
-            <div key={o.id} className={`rounded-lg border p-3 shadow-sm ${statusColor(o.status)} ${highlight ? 'animate-pulse' : ''}`}>
-              <div className="flex items-start justify-between">
-                <div className="space-y-0.5">
-                  <div className="font-semibold">#{o.id}{o.order_number ? ` · ${o.order_number}` : ''}</div>
-                  <div className="text-xs text-gray-600">{new Date(o.created_at).toLocaleString()}</div>
-                </div>
-                <span className={`px-2 py-0.5 rounded text-[11px] ${pillColor(o.status)}`}>{o.status}</span>
-              </div>
-
-              <div className="mt-2">
-                <div className="text-sm font-medium">{o.customer_name || '—'}</div>
-                <div className="text-xs text-gray-600">{o.customer_phone || o.customer_email || '—'}</div>
-              </div>
-
-              <div className="mt-3">
-                <div className="text-xs text-gray-600 mb-1">Items</div>
-                <ul className="text-sm space-y-1">
-                  {o.items?.map((it) => (
-                    <li key={it.id}>
-                      <div className="flex justify-between">
-                        <span>{it.quantity}× {it.menu_item?.name} {it.notes ? <span className="text-xs text-gray-600">— {it.notes}</span> : it.special_instructions ? <span className="text-xs text-gray-600">— {it.special_instructions}</span> : null}</span>
-                        <span className="text-gray-600">{formatCurrency(Number(it.subtotal || it.line_total || 0))}</span>
-                      </div>
-                      {it.modifiers && it.modifiers.length > 0 && (
-                        <div className="pl-4 text-xs text-gray-500">
-                          {it.modifiers.map((m, idx) => (
-                            <div key={idx}>• {m.name || m.id}{m.price ? ` (+${formatCurrency(Number(m.price))})` : ''}</div>
-                          ))}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                <div>
-                  <div className="text-xs text-gray-600">Service</div>
-                  <div>{(o.delivery_option||'').toUpperCase()}{o.table_number ? ` · Table ${o.table_number}` : ''}</div>
-                </div>
-                <div className="text-right">
-                  <div className="text-xs text-gray-600">Total</div>
-                  <div className="font-semibold">{formatCurrency(o.total_amount)}</div>
-                  <div className="text-[11px] mt-0.5">{String(o.payment_status||'').toUpperCase()==='COMPLETED' ? 'PAID' : 'UNPAID'}</div>
-                </div>
-              </div>
-
-              {o.notes && (
-                <div className="mt-2 text-xs"><span className="text-gray-600">Special Instructions:</span> {o.notes}</div>
-              )}
-
-              <div className="mt-3 flex flex-wrap gap-2">
-                {String(o.status||'').toUpperCase().includes('PENDING') && actionBtn('Accept', () => updateOrderStatus.mutate({ id: o.id, status: 'in_progress' }), 'bg-yellow-600/10')}
-                {String(o.status||'').toUpperCase().includes('CONFIRMED') && actionBtn('Start Preparing', () => updateOrderStatus.mutate({ id: o.id, status: 'in_progress' }), 'bg-orange-600/10')}
-                {(String(o.status||'').toUpperCase().includes('PREPARING') || String(o.status||'').toUpperCase().includes('CONFIRMED')) && actionBtn('Ready', () => updateOrderStatus.mutate({ id: o.id, status: 'served' }), 'bg-green-600/10')}
-                {!String(o.status||'').toUpperCase().includes('COMPLETED') && actionBtn('Complete', () => updateOrderStatus.mutate({ id: o.id, status: 'completed' }))}
-              </div>
-            </div>
-          )
-        })}
+        {live.map((o) => (
+          <OrderCard
+            key={o.id}
+            // @ts-ignore use shared OrderCard type
+            o={o}
+            highlight={!!highlights[o.id]}
+            formatCurrency={formatCurrency}
+            onAction={(a, id) => {
+              if (a==='accept') updateOrderStatus.mutate({ id, status: 'in_progress' })
+              else if (a==='start') updateOrderStatus.mutate({ id, status: 'in_progress' })
+              else if (a==='ready') updateOrderStatus.mutate({ id, status: 'served' })
+              else if (a==='complete') updateOrderStatus.mutate({ id, status: 'completed' })
+            }}
+          />
+        ))}
       </div>
 
       <audio ref={beepRef} preload="auto">
