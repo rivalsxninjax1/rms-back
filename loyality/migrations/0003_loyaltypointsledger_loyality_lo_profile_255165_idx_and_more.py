@@ -21,4 +21,3 @@ class Migration(migrations.Migration):
             index=models.Index(fields=['type', '-created_at'], name='loyality_lo_type_1d8220_idx'),
         ),
     ]
-
